@@ -24,8 +24,8 @@ GradeLab is a comprehensive educational assessment platform that leverages AI to
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/gl304.git
-cd gl304
+git clone https://github.com/Gradelab-enterprise-v2/astram.git
+cd astram
 ```
 
 ### 2. Install Dependencies
