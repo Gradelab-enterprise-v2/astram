@@ -1,0 +1,155 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Google Classroom Integration Rules
+
+## Authentication and Authorization
+
+1. Always use environment variables for Google API credentials:
+   - `VITE_GOOGLE_CLIENT_ID`
+   - `VITE_GOOGLE_CLIENT_SECRET`
+   - `VITE_GOOGLE_REDIRECT_URI`
+
+2. Required OAuth scopes must be explicitly defined and documented:
+   ```typescript
+   const GOOGLE_CLASSROOM_SCOPES = [
+       'https://www.googleapis.com/auth/classroom.courses.readonly',
+       'https://www.googleapis.com/auth/classroom.rosters.readonly',
+       'https://www.googleapis.com/auth/classroom.profile.emails',
+       'https://www.googleapis.com/auth/classroom.profile.photos'
+   ];
+   ```
+
+3. Token management:
+   - Store access tokens and refresh tokens securely in the database
+   - Implement token refresh mechanism before expiration
+   - Handle token revocation on disconnect
+   - Never expose tokens in client-side code or logs
+
+## Database Schema
+
+1. Connection Management:
+   - Use UUID for connection IDs
+   - Store token expiration timestamps
+   - Track sync status and error messages
+   - Implement Row Level Security (RLS) policies
+
+2. Course Mapping:
+   - Maintain unique constraint on (connection_id, google_course_id)
+   - Store course metadata (name, section, description, room)
+   - Track active/inactive status
+   - Link to system subjects via google_classroom_id
+
+3. Student Mapping:
+   - Maintain unique constraint on (course_id, google_student_id)
+   - Store student metadata (email, full_name)
+   - Link to system students via system_student_id
+   - Track active/inactive status
+
+4. Sync Logs:
+   - Record sync operations with timestamps
+   - Store sync type, status, and error messages
+   - Include metadata for debugging
+
+## API Integration
+
+1. Rate Limiting:
+   - Implement exponential backoff for API retries
+   - Handle 429 (Too Many Requests) responses
+   - Cache responses when appropriate
+
+2. Error Handling:
+   - Log all API errors with context
+   - Implement graceful fallbacks
+   - Provide user-friendly error messages
+   - Handle token expiration and refresh
+
+3. Data Synchronization:
+   - Implement incremental sync where possible
+   - Handle partial sync failures
+   - Maintain data consistency between systems
+   - Log sync operations for auditing
+
+## UI Components
+
+1. Connection Flow:
+   - Clear connection status indicators
+   - Loading states during operations
+   - Error handling and user feedback
+   - Disconnect confirmation
+
+2. Course Selection:
+   - Pagination for large course lists
+   - Search and filter capabilities
+   - Clear course metadata display
+   - Active/inactive status indicators
+
+3. Student Mapping:
+   - Batch operations support
+   - Clear mapping status indicators
+   - Search and filter capabilities
+   - Validation of student data
+
+## Security
+
+1. Data Protection:
+   - Encrypt sensitive data at rest
+   - Use HTTPS for all API calls
+   - Implement proper CORS policies
+   - Follow least privilege principle
+
+2. Access Control:
+   - Implement proper RLS policies
+   - Validate user permissions
+   - Audit access to sensitive operations
+   - Handle token revocation
+
+## Testing
+
+1. Unit Tests:
+   - Test all service methods
+   - Mock Google API responses
+   - Test error handling
+   - Test token management
+
+2. Integration Tests:
+   - Test complete sync flows
+   - Test error scenarios
+   - Test data consistency
+   - Test UI components
+
+## Monitoring and Logging
+
+1. Logging:
+   - Log all API calls
+   - Log sync operations
+   - Log error scenarios
+   - Include relevant context
+
+2. Monitoring:
+   - Track sync success rates
+   - Monitor API rate limits
+   - Track error rates
+   - Monitor token usage
+
+## Best Practices
+
+1. Code Organization:
+   - Separate concerns (auth, sync, UI)
+   - Use TypeScript interfaces
+   - Implement proper error types
+   - Follow consistent naming conventions
+
+2. Performance:
+   - Implement pagination
+   - Use batch operations
+   - Cache responses
+   - Optimize database queries
+
+3. Maintenance:
+   - Document API changes
+   - Version API endpoints
+   - Maintain changelog
+   - Regular security audits 

@@ -1,0 +1,405 @@
+# GradelabAI Project Rules
+
+## Project Overview
+GradelabAI is an educational management system with AI-powered features for automated grading, question generation, and analytics. The application is built with React, TypeScript, and Vite, using shadcn-ui components and Tailwind CSS for styling.
+
+## Core Features and Context
+
+### 1. Authentication & Authorization
+- Implements secure user authentication using context-based state management
+- Protected routes for authenticated users only
+- Role-based access control for admin features
+- Secure session management and token handling
+
+### 2. Academic Management
+#### Classes Management
+- Create and manage academic classes
+- Track class performance and student progress
+- Assign teachers and manage class schedules
+- View detailed class analytics
+
+#### Subjects Management
+- Organize and manage subject curriculum
+- Track subject-wise performance
+- Manage subject resources and materials
+- Link subjects to classes and teachers
+
+#### Students Management
+- Comprehensive student profiles
+- Track academic progress
+- Manage student enrollments
+- View performance analytics
+
+### 3. Assessment & Grading
+#### Auto-Grading System
+- AI-powered automated grading
+- Support for multiple question types
+- Detailed evaluation reports
+- Performance analytics and insights
+
+#### Test Management
+- Create and manage tests
+- Subject-wise test organization
+- Test scheduling and distribution
+- Result tracking and analysis
+
+### 4. Question Generation
+- AI-powered question generation
+- Question bank management
+- History tracking of generated questions
+- Customizable question parameters
+
+### 5. Analytics & Reporting
+- Comprehensive performance analytics
+- Historical data tracking
+- Paper-wise detailed reports
+- Student progress visualization
+
+### 6. Resource Management
+- Centralized resource repository
+- Organized resource categorization
+- Easy access to study materials
+- Resource sharing capabilities
+
+### 7. Payment Integration
+- Razorpay payment gateway integration
+- Subscription management
+- Payment history tracking
+- Secure transaction handling
+
+### 8. System Settings
+- Theme customization (light/dark mode)
+- User profile management
+- Admin panel for system configuration
+- System-wide settings control
+
+## Technical Architecture
+
+### Frontend Structure
+- React-based single-page application
+- TypeScript for type safety
+- Vite for fast development and building
+- Responsive design with Tailwind CSS
+
+### State Management
+- React Context for global state
+- Local state for component-specific data
+- Proper state initialization and cleanup
+- Efficient state updates and caching
+
+### API Integration
+- RESTful API communication
+- Secure authentication handling
+- Error handling and retry mechanisms
+- Loading state management
+
+### Security Measures
+- JWT-based authentication
+- Protected routes implementation
+- Secure data transmission
+- Input validation and sanitization
+
+### Performance Optimization
+- Code splitting for faster loading
+- Lazy loading of components
+- Efficient state updates
+- Optimized bundle size
+
+## Development Guidelines
+
+### Code Organization
+- Modular component structure
+- Clear separation of concerns
+- Reusable component patterns
+- Consistent file naming conventions
+
+### Testing Strategy
+- Unit tests for core functionality
+- Component testing with React Testing Library
+- API integration testing
+- Performance testing
+
+### Documentation
+- Comprehensive code comments
+- API documentation
+- Component usage guidelines
+- Setup and deployment instructions
+
+### Version Control
+- Feature-based branching
+- Conventional commits
+- Code review process
+- Automated CI/CD pipeline
+
+## Project Structure
+- The project is a React + TypeScript application built with Vite
+- Main application code is in the `src` directory
+- Uses shadcn-ui components and Tailwind CSS for styling
+- Follows a modular architecture with separate directories for components, pages, services, etc.
+
+## Key Directories
+- `src/components/` - Reusable UI components
+- `src/pages/` - Page-level components
+- `src/services/` - API and external service integrations
+- `src/context/` - React context providers
+- `src/hooks/` - Custom React hooks
+- `src/utils/` - Utility functions
+- `src/types/` - TypeScript type definitions
+- `src/lib/` - Core library code
+
+## Code Style Guidelines
+- Use TypeScript for all new code
+- Follow React functional components pattern
+- Use hooks for state management and side effects
+- Implement proper error handling
+- Write meaningful comments for complex logic
+- Use ESLint and Prettier for code formatting
+
+## Component Guidelines
+- Components should be small and focused
+- Use shadcn-ui components when possible
+- Follow the atomic design pattern
+- Implement proper prop types and interfaces
+- Use CSS modules or Tailwind for styling
+
+## State Management
+- Use React Context for global state
+- Implement proper state initialization
+- Handle loading and error states
+- Use proper TypeScript types for state
+
+## API Integration
+- Keep API calls in service files
+- Implement proper error handling
+- Use TypeScript interfaces for API responses
+- Handle loading states appropriately
+
+## Testing
+- Write unit tests for critical functionality
+- Test components in isolation
+- Mock external dependencies
+- Use proper test descriptions
+
+## Performance
+- Implement proper code splitting
+- Optimize bundle size
+- Use proper caching strategies
+- Implement lazy loading where appropriate
+
+## Security
+- Never commit sensitive data
+- Use environment variables for secrets
+- Implement proper authentication
+- Sanitize user inputs
+
+## Documentation
+- Keep README.md updated
+- Document complex functions
+- Add comments for non-obvious code
+- Maintain type documentation
+
+## Git Workflow
+- Use meaningful commit messages
+- Follow conventional commits
+- Keep commits focused and self-contained
+- Review code before committing 
+
+## OpenAI Image Processing Batch Size Management
+
+### Overview
+When processing images for text extraction (OCR), the system uses batch processing to optimize API calls and improve performance. This section defines the rules for managing batch sizes across different components.
+
+### Current Batch Size Configuration
+- **Default Batch Size**: 10 images per batch
+- **Maximum Images per API Call**: 10 images
+- **Timeout per Batch**: 120 seconds (2 minutes)
+- **Page Limit**: 40 pages maximum per document
+
+### Files That Control Batch Sizes
+
+#### 1. Test Paper Extraction (`src/services/test-paper/extract-text.ts`)
+```typescript
+// Direct processing (base64)
+const batchSize = 10; // Process 10 pages at a time for better efficiency
+
+// Storage-based processing
+const batchSize = 10; // Process 10 images at a time for better efficiency
+```
+
+#### 2. Question Paper Component (`src/components/QuestionPaper.tsx`)
+```typescript
+const BATCH_SIZE = 10; // Process 10 images at a time for better efficiency
+```
+
+#### 3. Student Answer Sheets (`src/services/student-sheets/student-sheets-api.ts`)
+```typescript
+const batchSize = 10; // Process images in batches of 10
+```
+
+#### 4. Chapter Materials (`src/hooks/use-chapter-materials.ts`)
+```typescript
+const { batchSize = 10, onProgress } = options; // Default to 10 pages per batch
+```
+
+#### 5. Edge Functions
+- **extract-text**: `MAX_PAGES_PER_REQUEST = 10`
+- **extract-handwritten**: Processes up to 10 images per batch
+
+### Rules for Changing Batch Sizes
+
+#### When to Increase Batch Size
+- **Performance Optimization**: When API latency is low and you want to reduce total API calls
+- **Cost Optimization**: When you want to minimize the number of API requests
+- **High-Quality Images**: When images are clear and likely to process quickly
+- **Small Documents**: When documents have fewer pages (under 20)
+
+#### When to Decrease Batch Size
+- **Timeout Issues**: When batches are timing out frequently
+- **Large Documents**: When processing documents with many pages (over 30)
+- **Poor Image Quality**: When images are blurry or complex
+- **API Rate Limits**: When hitting rate limits with larger batches
+- **Memory Constraints**: When processing large images that consume significant memory
+
+#### Recommended Batch Size Guidelines
+
+| Document Type | Page Count | Recommended Batch Size | Reasoning |
+|---------------|------------|----------------------|-----------|
+| Student Answer Sheets | 1-5 pages | 5 | Individual processing for accuracy |
+| Test Papers | 1-10 pages | 10 | Balance of speed and reliability |
+| Chapter Materials | 1-20 pages | 10 | Standard processing |
+| Large Documents | 20+ pages | 5 | Prevent timeouts and memory issues |
+| Complex Images | Any | 3-5 | Reduce processing load per batch |
+
+### Implementation Guidelines
+
+#### 1. Environment-Based Configuration
+```typescript
+// Use environment variables for batch size configuration
+const BATCH_SIZE = parseInt(Deno.env.get('OPENAI_BATCH_SIZE') || '10');
+const MAX_PAGES = parseInt(Deno.env.get('MAX_PAGES_PER_DOCUMENT') || '40');
+```
+
+#### 2. Dynamic Batch Size Adjustment
+```typescript
+// Adjust batch size based on document characteristics
+const getOptimalBatchSize = (imageCount: number, imageQuality: 'high' | 'medium' | 'low') => {
+  if (imageCount > 30) return 5;
+  if (imageQuality === 'low') return 5;
+  return 10;
+};
+```
+
+#### 3. Error Handling for Batch Size Changes
+```typescript
+// Implement fallback for batch size failures
+try {
+  const result = await processBatch(images, batchSize);
+} catch (error) {
+  if (error.message.includes('timeout') && batchSize > 5) {
+    // Retry with smaller batch size
+    return await processBatch(images, Math.floor(batchSize / 2));
+  }
+  throw error;
+}
+```
+
+#### 4. Progress Tracking
+```typescript
+// Update progress based on batch size
+const updateProgress = (currentBatch: number, totalBatches: number, batchSize: number) => {
+  const progress = Math.floor((currentBatch * batchSize / totalImages) * 100);
+  onProgress?.(progress, extractedText, currentBatch, totalBatches);
+};
+```
+
+### Performance Monitoring
+
+#### Metrics to Track
+- **Processing Time**: Time per batch vs total time
+- **Success Rate**: Percentage of successful batch extractions
+- **Timeout Rate**: Frequency of batch timeouts
+- **API Cost**: Cost per document processed
+- **Memory Usage**: Peak memory usage during processing
+
+#### Monitoring Implementation
+```typescript
+const processWithMonitoring = async (images: string[], batchSize: number) => {
+  const startTime = Date.now();
+  const results = await processBatch(images, batchSize);
+  const processingTime = Date.now() - startTime;
+  
+  // Log metrics for optimization
+  console.log(`Batch size: ${batchSize}, Time: ${processingTime}ms, Success: ${results.success}`);
+  
+  return results;
+};
+```
+
+### Testing Batch Size Changes
+
+#### Before Deploying Changes
+1. **Load Testing**: Test with various document sizes (1-50 pages)
+2. **Timeout Testing**: Verify timeout handling with large batches
+3. **Memory Testing**: Monitor memory usage with different batch sizes
+4. **Cost Analysis**: Compare API costs with different batch sizes
+5. **User Experience**: Test UI responsiveness during processing
+
+#### A/B Testing Framework
+```typescript
+// Implement A/B testing for batch size optimization
+const getBatchSizeForUser = (userId: string, documentType: string) => {
+  const userGroup = getUserGroup(userId);
+  const testConfig = getTestConfig(userGroup, 'batch_size_optimization');
+  
+  return testConfig.batchSize || DEFAULT_BATCH_SIZE;
+};
+```
+
+### Rollback Strategy
+
+#### Emergency Rollback
+```typescript
+// Implement emergency rollback to smaller batch sizes
+const EMERGENCY_BATCH_SIZE = 5;
+const isEmergencyMode = () => {
+  return Deno.env.get('EMERGENCY_MODE') === 'true';
+};
+
+const getBatchSize = () => {
+  return isEmergencyMode() ? EMERGENCY_BATCH_SIZE : NORMAL_BATCH_SIZE;
+};
+```
+
+### Documentation Requirements
+
+#### When Changing Batch Sizes
+1. **Update this rule**: Document the change and reasoning
+2. **Update README**: Add performance impact notes
+3. **Update API docs**: Document new batch size limits
+4. **Monitor metrics**: Track the impact of changes
+5. **User communication**: Notify users of processing time changes
+
+### Security Considerations
+
+#### Rate Limiting
+- Implement exponential backoff for API failures
+- Respect API rate limits when adjusting batch sizes
+- Monitor API usage to prevent quota exhaustion
+
+#### Memory Safety
+- Validate image sizes before processing
+- Implement memory usage monitoring
+- Set maximum image size limits per batch
+
+const handleDeleteTest = (id: string) => {
+  deleteTest(id, {
+    onSuccess: () => {
+      setTestToDelete(null);
+    }
+  });
+}; 
+    onSuccess: () => {
+      setTestToDelete(null);
+    }
+  });
+}; 

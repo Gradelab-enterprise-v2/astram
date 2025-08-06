@@ -1,0 +1,10 @@
+
+project_id = "mfnhgldghrnjrwlhtvor"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage", "graphql_public"]
+
+[functions.analyze-paper-enhanced]
+verify_jwt = true

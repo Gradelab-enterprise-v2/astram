@@ -1,0 +1,112 @@
+# Admin Panel Rules and Guidelines
+
+## Routing
+- All admin routes should be prefixed with `/admin`
+- Protect all admin routes with authentication middleware
+- Implement role-based access control (RBAC) for different admin levels
+- Keep route names descriptive and consistent (e.g., `/admin/users`, `/admin/settings`)
+
+## Authentication & Authorization
+- Use secure session management
+- Implement JWT or similar token-based authentication
+- Store authentication tokens securely
+- Include CSRF protection
+- Implement rate limiting for admin endpoints
+- Log all authentication attempts and admin actions
+
+## Component Structure
+- Place admin components in `components/admin` directory
+- Follow atomic design principles:
+  - atoms: basic UI elements
+  - molecules: groups of atoms
+  - organisms: complex UI sections
+  - templates: page layouts
+  - pages: complete admin views
+- Keep components modular and reusable
+- Implement consistent error handling
+
+## State Management
+- Use centralized state management (Redux/Context API)
+- Implement proper loading and error states
+- Cache admin data appropriately
+- Clear sensitive data on logout
+- Handle session timeouts gracefully
+
+## API Integration
+- Use typed API responses
+- Implement proper error handling for API calls
+- Cache API responses where appropriate
+- Use environment variables for API endpoints
+- Follow RESTful conventions for admin endpoints
+
+## UI/UX Guidelines
+- Maintain consistent styling across admin interfaces
+- Use a design system for admin components
+- Implement responsive design for all admin views
+- Show loading states for async operations
+- Provide clear feedback for user actions
+- Use clear and consistent iconography
+
+## Data Management
+- Implement pagination for large datasets
+- Allow sorting and filtering of admin data
+- Enable data export functionality
+- Implement proper form validation
+- Handle file uploads securely
+
+## Security
+- Sanitize all user inputs
+- Implement proper XSS protection
+- Use HTTPS for all admin routes
+- Implement audit logging
+- Regular security audits
+- Follow principle of least privilege
+
+## Error Handling
+- Implement global error boundary
+- Log errors to monitoring service
+- Show user-friendly error messages
+- Handle network errors gracefully
+- Provide fallback UI for errors
+
+## Performance
+- Implement code splitting for admin routes
+- Optimize bundle size
+- Use lazy loading for admin components
+- Cache static assets
+- Optimize API calls
+
+## Testing
+- Write unit tests for admin components
+- Implement integration tests for admin flows
+- Test different user roles and permissions
+- Test error scenarios
+- Maintain good test coverage
+
+## Documentation
+- Document all admin features
+- Keep API documentation up to date
+- Document state management patterns
+- Include setup instructions
+- Document deployment process
+
+## Monitoring
+- Implement analytics for admin actions
+- Monitor authentication attempts
+- Track performance metrics
+- Set up error tracking
+- Monitor API usage
+
+## Accessibility
+- Follow WCAG guidelines
+- Implement keyboard navigation
+- Use proper ARIA labels
+- Ensure proper color contrast
+- Test with screen readers
+
+## Code Quality
+- Follow consistent coding style
+- Use TypeScript for type safety
+- Implement proper linting rules
+- Regular code reviews
+- Keep dependencies updated 

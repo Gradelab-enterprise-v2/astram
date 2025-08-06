@@ -1,0 +1,4 @@
+
+project_id = "mfnhgldghrnjrwlhtvor"
+name = "extract-handwritten"
+verify_jwt = false
