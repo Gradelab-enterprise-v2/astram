@@ -40,7 +40,7 @@ export function StudentForm({
       gr_number: "",
       roll_number: "",
       year: new Date().getFullYear().toString(),
-      class_id: "",
+      class_id: "none",
       email: "",
       phone: "",
       gender: "",
@@ -71,7 +71,7 @@ export function StudentForm({
   const handleFormSubmit = (data: any) => {
     const submitData = {
       ...data,
-      class_id: data.class_id === "none" ? null : data.class_id
+      class_id: data.class_id === "none" || data.class_id === "" ? null : data.class_id
     };
     onSubmit(submitData);
   };
