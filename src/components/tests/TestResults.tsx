@@ -9,6 +9,7 @@ import { Test } from "@/hooks/use-tests";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface TestResultsProps {
   testId: string;
@@ -21,7 +22,9 @@ interface TestResultsProps {
 
 export function TestResults({ testId, test, testResults, subjectStudents, isLoadingResults, isLoadingStudents }: TestResultsProps) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [preparingSummary, setPreparingSummary] = useState<string | null>(null);
+  const [gradingAll, setGradingAll] = useState(false);
 
   // Handle viewing the assessment summary for a student
   const handleViewSummary = async (studentId: string) => {
@@ -103,6 +106,67 @@ export function TestResults({ testId, test, testResults, subjectStudents, isLoad
     }
   };
 
+  // Auto Grade All students
+  const handleAutoGradeAll = async () => {
+    setGradingAll(true);
+    toast.loading("Auto grading all students...");
+    try {
+      for (const student of subjectStudents) {
+        let result = testResults.find(r => r.student_id === student.id);
+        // If no result exists, create one with marks_obtained: 0
+        if (!result) {
+          const { data: newResult, error: createError } = await supabase
+            .from("test_results")
+            .insert({
+              test_id: testId,
+              student_id: student.id,
+              marks_obtained: 0,
+              updated_at: new Date().toISOString(),
+            })
+            .select()
+            .single();
+          if (createError) {
+            throw new Error(`Failed to create result for ${student.name}: ${createError.message}`);
+          }
+          result = newResult;
+        }
+        // Upsert auto_grade_status for each student
+        const evaluationResult = {
+          student_name: student?.name || "Unknown Student",
+          roll_no: student?.roll_number || "N/A",
+          class: test?.class?.name || "N/A",
+          subject: test?.subject?.name || "N/A",
+          answers: []
+        };
+        const { error: syncError } = await supabase
+          .from("auto_grade_status")
+          .upsert({
+            student_id: student.id,
+            test_id: testId,
+            status: "completed",
+            score: result.marks_obtained,
+            evaluation_result: evaluationResult,
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'student_id,test_id',
+            ignoreDuplicates: false
+          });
+        if (syncError) {
+          throw new Error(`Failed for ${student.name}: ${syncError.message}`);
+        }
+      }
+      toast.dismiss();
+      toast.success("Auto grading completed for all students");
+      // Refetch test results so UI updates
+      queryClient.invalidateQueries({ queryKey: ["test-results", testId] });
+    } catch (error) {
+      toast.dismiss();
+      toast.error(error instanceof Error ? error.message : "Failed to auto grade all students");
+    } finally {
+      setGradingAll(false);
+    }
+  };
+
   // Get the result for a student or return null
   const getStudentResult = (studentId: string) => {
     return testResults.find(result => result.student_id === studentId);
@@ -112,6 +176,11 @@ export function TestResults({ testId, test, testResults, subjectStudents, isLoad
     <Card className="mb-6">
       <CardHeader>
         <CardTitle>Student Results</CardTitle>
+        <div className="flex justify-end mt-2">
+          <Button onClick={handleAutoGradeAll} disabled={gradingAll || isLoadingResults || isLoadingStudents}>
+            {gradingAll ? "Auto Grading..." : "Auto Grade All"}
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {isLoadingResults || isLoadingStudents ? (

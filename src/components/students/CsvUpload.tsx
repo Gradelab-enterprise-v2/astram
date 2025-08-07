@@ -10,6 +10,8 @@ import { CsvMappingDialog } from "./CsvMappingDialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Card, CardContent } from "@/components/ui/card";
 import { ClassSelect } from "@/components/ui/ClassSelect";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction } from "@/components/ui/alert-dialog";
+import { useNavigate } from "react-router-dom";
 
 interface CsvUploadProps {
   onSuccess?: () => void;
@@ -24,6 +26,8 @@ export function CsvUpload({ onSuccess }: CsvUploadProps) {
   const [columnMapping, setColumnMapping] = useState<Record<string, string>>({});
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const queryClient = useQueryClient();
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const navigate = useNavigate();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = e.target.files?.[0];
@@ -114,6 +118,7 @@ export function CsvUpload({ onSuccess }: CsvUploadProps) {
       setFile(null);
       setColumnMapping({});
       setSelectedClassId("");
+      setShowConfirmation(true); // Show confirmation dialog
       onSuccess?.();
     } catch (error: any) {
       console.error("Error processing CSV:", error);
@@ -231,6 +236,20 @@ export function CsvUpload({ onSuccess }: CsvUploadProps) {
         csvData={csvData}
         onMappingComplete={handleMappingComplete}
       />
+
+      <AlertDialog open={showConfirmation} onOpenChange={setShowConfirmation}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Import Complete</AlertDialogTitle>
+            <AlertDialogDescription>
+              Students have been successfully imported. You will be redirected to the students list.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => navigate("/students", { replace: true })}>OK</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

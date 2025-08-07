@@ -26,18 +26,22 @@ const YearInput = React.forwardRef<
   Omit<React.ComponentProps<"input">, "type" | "min" | "max"> & {
     defaultYear?: number;
   }
->(({ className, defaultYear = 2015, ...props }, ref) => {
-  return (
-    <Input
-      type="number"
-      min={1900}
-      max={2100}
-      defaultValue={defaultYear}
-      className={cn("appearance-auto", className)}
-      ref={ref}
-      {...props}
-    />
-  )
+>(({ className, defaultYear = 2015, value, ...props }, ref) => {
+  // If value is undefined/null, use defaultValue, otherwise use value (controlled)
+  const inputProps: any = {
+    type: "number",
+    min: 1900,
+    max: 2100,
+    className: cn("appearance-auto", className),
+    ref,
+    ...props
+  };
+  if (value !== undefined) {
+    inputProps.value = value;
+  } else {
+    inputProps.defaultValue = defaultYear;
+  }
+  return <Input {...inputProps} />;
 })
 YearInput.displayName = "YearInput"
 

@@ -6,14 +6,19 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useStudents } from "@/hooks/use-students";
 import { useClasses } from "@/hooks/use-classes";
 import { StudentForm } from "@/components/students/StudentForm";
+import { useState } from "react";
+import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogFooter, AlertDialogTitle, AlertDialogDescription, AlertDialogAction } from "@/components/ui/alert-dialog";
 
 export default function NewStudent() {
   const navigate = useNavigate();
   const { createStudent, isCreating } = useStudents();
   const { classes } = useClasses();
+  const [showConfirmation, setShowConfirmation] = useState(false);
 
   const onSubmit = (data: any) => {
-    createStudent(data);
+    createStudent(data, {
+      onSuccess: () => setShowConfirmation(true)
+    });
   };
 
   const onCancel = () => {
@@ -45,6 +50,20 @@ export default function NewStudent() {
           />
         </CardContent>
       </Card>
+
+      <AlertDialog open={showConfirmation} onOpenChange={setShowConfirmation}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Student Added</AlertDialogTitle>
+            <AlertDialogDescription>
+              The student has been added successfully. You will be redirected to the students list.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction onClick={() => navigate("/students", { replace: true })}>OK</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
