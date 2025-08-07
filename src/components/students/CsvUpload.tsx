@@ -45,7 +45,24 @@ export function CsvUpload({ onSuccess }: CsvUploadProps) {
     const reader = new FileReader();
     reader.onload = (e) => {
       const text = e.target?.result as string;
-      const lines = text.split("\n").map(line => line.split(",").map(cell => cell.trim()));
+      const lines = text.split("\n")
+        .map(line => line.trim())
+        .filter(line => line.length > 0) // Remove empty lines
+        .map(line => {
+          // Basic CSV parsing - split by comma and trim each cell
+          const cells = line.split(",").map(cell => cell.trim().replace(/^["']|["']$/g, ''));
+          return cells;
+        });
+      
+      if (lines.length === 0) {
+        toast.error("CSV file is empty or invalid");
+        return;
+      }
+      
+      console.log("CSV Headers:", lines[0]);
+      console.log("CSV Data rows:", lines.length - 1);
+      console.log("First few data rows:", lines.slice(1, 4));
+      
       setCsvHeaders(lines[0]);
       setCsvData(lines);
       setShowMappingDialog(true);
@@ -80,15 +97,20 @@ export function CsvUpload({ onSuccess }: CsvUploadProps) {
       }
 
       // Process each row
-      const students = csvData.slice(1).map(row => {
+      const students = csvData.slice(1).map((row, index) => {
         const student: Record<string, string> = {};
         
-        csvHeaders.forEach((header, index) => {
+        csvHeaders.forEach((header, headerIndex) => {
           const field = mapping[header];
           if (field) {
-            student[field] = row[index] || "";
+            student[field] = row[headerIndex] || "";
           }
         });
+        
+        // Validate required fields
+        if (!student.name || !student.gr_number || !student.roll_number) {
+          throw new Error(`Row ${index + 2}: Missing required fields (Name, GR Number, or Roll Number)`);
+        }
         
         // Add user_id, year, and class_id to each student
         return {
@@ -99,12 +121,53 @@ export function CsvUpload({ onSuccess }: CsvUploadProps) {
         };
       }).filter(student => Object.keys(student).length > 0);
 
+      // Check for duplicates within the CSV data
+      const grNumbers = students.map(s => s.gr_number);
+      const duplicateGrNumbers = grNumbers.filter((gr, index) => grNumbers.indexOf(gr) !== index);
+      
+      console.log("Processing students:", students.length);
+      console.log("GR numbers from CSV:", grNumbers);
+      console.log("Duplicate GR numbers:", duplicateGrNumbers);
+      
+      if (duplicateGrNumbers.length > 0) {
+        const uniqueDuplicates = [...new Set(duplicateGrNumbers)];
+        toast.error(`Duplicate GR numbers found in CSV: ${uniqueDuplicates.join(", ")}`);
+        return;
+      }
+
+      // Check for existing students with the same GR numbers
+      const { data: existingStudents, error: existingError } = await supabase
+        .from("students")
+        .select("gr_number")
+        .eq("user_id", user.id)
+        .in("gr_number", grNumbers);
+
+      if (existingError) {
+        throw new Error(`Error checking existing students: ${existingError.message}`);
+      }
+
+      console.log("Existing students found:", existingStudents?.length || 0);
+      console.log("Existing GR numbers:", existingStudents?.map(s => s.gr_number) || []);
+
+      if (existingStudents && existingStudents.length > 0) {
+        const existingGrNumbers = existingStudents.map(s => s.gr_number);
+        toast.error(`Students with these GR numbers already exist: ${existingGrNumbers.join(", ")}`);
+        return;
+      }
+
       // Upload students to database
       const { error } = await supabase
         .from("students")
         .insert(students);
 
       if (error) {
+        if (error.code === "23505") {
+          // Unique constraint violation
+          if (error.message.includes("students_user_id_gr_number_key")) {
+            throw new Error("Duplicate GR numbers detected. Please ensure all GR numbers are unique within your account.");
+          }
+          throw new Error(`Database constraint violation: ${error.message}`);
+        }
         throw error;
       }
 
@@ -122,6 +185,12 @@ export function CsvUpload({ onSuccess }: CsvUploadProps) {
       onSuccess?.();
     } catch (error: any) {
       console.error("Error processing CSV:", error);
+      console.error("Error details:", {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint
+      });
       toast.error("Failed to import students from CSV");
     } finally {
       setIsUploading(false);
