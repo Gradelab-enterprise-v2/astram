@@ -21,7 +21,7 @@ interface SubjectPapersProps {
 }
 
 export const SubjectPapers: React.FC<SubjectPapersProps> = ({ subjectId }) => {
-  const { usePapersBySubject, extractText, isExtracting, uploadPaper, isUploading } = useTestPapers();
+  const { usePapersBySubject, extractText, uploadPaper, isUploading } = useTestPapers();
   const { data: papers = [], isLoading, refetch } = usePapersBySubject(subjectId);
 
   const [paperViewOpen, setPaperViewOpen] = useState(false);
@@ -85,16 +85,26 @@ export const SubjectPapers: React.FC<SubjectPapersProps> = ({ subjectId }) => {
     }, 1500);
     
     try {
-      await extractText(paper.id);
-      clearInterval(progressInterval);
-      setExtractProgressPercent(100);
-      toast.success("Text extracted successfully");
-      refetch();
-      
-      setTimeout(() => {
-        setProcessingPaperId(null);
-        setExtractProgressPercent(0);
-      }, 1000);
+      extractText(paper.id, {
+        onSuccess: () => {
+          clearInterval(progressInterval);
+          setExtractProgressPercent(100);
+          toast.success("Text extracted successfully");
+          
+          // Reset local state immediately after successful extraction
+          setProcessingPaperId(null);
+          setExtractProgressPercent(0);
+          
+          refetch();
+        },
+        onError: (error: Error) => {
+          clearInterval(progressInterval);
+          console.error("Error extracting text:", error);
+          toast.error(`Failed to extract text: ${error.message || 'Unknown error'}`);
+          setProcessingPaperId(null);
+          setExtractProgressPercent(0);
+        }
+      });
     } catch (error) {
       clearInterval(progressInterval);
       console.error("Error extracting text:", error);
@@ -244,7 +254,7 @@ export const SubjectPapers: React.FC<SubjectPapersProps> = ({ subjectId }) => {
                                   variant="outline" 
                                   size="sm"
                                   onClick={() => handleExtractText(paper)}
-                                  disabled={isProcessing || isExtracting}
+                                  disabled={isProcessing}
                                 >
                                   {isProcessing ? (
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

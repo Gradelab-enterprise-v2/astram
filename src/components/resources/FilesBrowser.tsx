@@ -45,7 +45,7 @@ export function FilesBrowser() {
 
   const { subjects, isLoading: subjectsLoading } = useSubjects();
   
-  const { usePapersBySubject, extractText, isExtracting, deletePaper, isDeleting } = useTestPapers();
+  const { usePapersBySubject, extractText, deletePaper, isDeleting } = useTestPapers();
   const { data: papers = [], isLoading: papersLoading, refetch } = usePapersBySubject(selectedSubject);
 
   useEffect(() => {
@@ -129,27 +129,27 @@ export function FilesBrowser() {
           });
         }, 400);
         
-        extractText(paper.id)
-          .then(() => {
+        extractText(paper.id, {
+          onSuccess: () => {
             setExtractionProgress(100);
             setExtractionPhase("Extraction complete");
             
-            setTimeout(() => {
-              setExtractingPaperId(null);
-              setExtractionProgress(0);
-              setExtractionPhase("");
-            }, 1000);
+            // Reset local state immediately after successful extraction
+            setExtractingPaperId(null);
+            setExtractionProgress(0);
+            setExtractionPhase("");
             
             toast.success(`Successfully extracted text from ${paper.title}`);
             refetch();
-          })
-          .catch((error) => {
+          },
+          onError: (error: Error) => {
             console.error("Text extraction error:", error);
             setExtractingPaperId(null);
             setExtractionProgress(0);
             setExtractionPhase("");
-            toast.error(`Failed to extract text: ${error instanceof Error ? error.message : "Unknown error"}`);
-          });
+            toast.error(`Failed to extract text: ${error.message || "Unknown error"}`);
+          }
+        });
       }, 1500);
       
     } catch (error) {
@@ -261,7 +261,7 @@ export function FilesBrowser() {
                         <AlignLeft className="h-4 w-4 text-green-500" />
                       </Button>
                     ) : (
-                      <Button variant="ghost" size="icon" onClick={() => handleExtractText(questionPaper)} disabled={isExtracting} title="Extract Text">
+                      <Button variant="ghost" size="icon" onClick={() => handleExtractText(questionPaper)} disabled={extractingPaperId === questionPaper.id} title="Extract Text">
                         <FileSpreadsheet className="h-4 w-4" />
                       </Button>
                     )}
@@ -482,11 +482,10 @@ export function FilesBrowser() {
         size="sm"
         className="flex-1 justify-start"
         onClick={() => handleExtractText(paper)}
-        disabled={isExtracting || !!extractingPaperId}
+        disabled={!!extractingPaperId}
       >
         <FileSpreadsheet className="mr-2 h-4 w-4" />
-        {isExtracting && extractingPaperId !== paper.id ? 'Please wait...' : 'Extract Text'}
-        {isExtracting && extractingPaperId !== paper.id && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+        Extract Text
       </Button>
     );
   };
@@ -560,11 +559,43 @@ export function FilesBrowser() {
         // If no extracted text, extract first
         if (!text) {
           setIsExtracting(true);
-          const extracted = await extractText(questionPaper.id);
-          text = extracted.extracted_text;
-          setIsExtracting(false);
-          setQuestionPaperText(text);
-          refetch();
+          // We need to wait for the extraction to complete and then fetch the updated paper
+          extractText(questionPaper.id, {
+            onSuccess: async () => {
+              // Fetch the updated paper to get the extracted text
+              const { data: updatedPaper } = await supabase
+                .from('test_papers')
+                .select('extracted_text')
+                .eq('id', questionPaper.id)
+                .single();
+              
+              if (updatedPaper?.extracted_text) {
+                text = updatedPaper.extracted_text;
+                setQuestionPaperText(text);
+                refetch();
+              }
+              setIsExtracting(false);
+            },
+            onError: (error: Error) => {
+              console.error("Error extracting text:", error);
+              setIsExtracting(false);
+            }
+          });
+          
+          // Wait a bit for the extraction to start
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // Try to get the extracted text
+          const { data: updatedPaper } = await supabase
+            .from('test_papers')
+            .select('extracted_text')
+            .eq('id', questionPaper.id)
+            .single();
+          
+          if (updatedPaper?.extracted_text) {
+            text = updatedPaper.extracted_text;
+            setQuestionPaperText(text);
+          }
         }
         if (!text) {
           toast.error("Failed to extract text from question paper.");
@@ -656,15 +687,10 @@ export function FilesBrowser() {
                 <Button
                   type="button"
                   variant="secondary"
-                  disabled={isGenerating || isUploading || isExtracting || !questionPaper || (!questionPaper.has_extracted_text && !questionPaperText)}
+                  disabled={isGenerating || isUploading || !questionPaper || (!questionPaper.has_extracted_text && !questionPaperText)}
                   onClick={handleGenerateAnswerKey}
                 >
-                  {isExtracting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Extracting Question Paper...
-                    </>
-                  ) : isGenerating ? (
+                  {isGenerating ? (
                     <>
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       Generating Answer Key...
