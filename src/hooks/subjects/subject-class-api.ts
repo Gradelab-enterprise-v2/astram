@@ -1,40 +1,22 @@
 
 import { supabase } from "@/integrations/supabase/client";
-import { ClassSubject } from "@/types/academics";
+import { Subject } from "@/types/academics";
 
-export const addSubjectToClass = async ({ classId, subjectId }: { classId: string, subjectId: string }): Promise<ClassSubject> => {
+export const addSubjectToClass = async ({ classId, subjectId }: { classId: string, subjectId: string }): Promise<Subject> => {
   const { data: userData } = await supabase.auth.getUser();
   
   if (!userData.user?.id) {
     throw new Error("User not authenticated");
   }
   
-  console.log("Checking if subject already assigned to class:", subjectId, classId);
-  const { data: existingData, error: checkError } = await supabase
-    .from("class_subjects")
-    .select("*")
-    .eq("class_id", classId)
-    .eq("subject_id", subjectId)
-    .maybeSingle();
-    
-  if (checkError) {
-    console.error("Error checking existing class subject:", checkError);
-    throw new Error(checkError.message);
-  }
-  
-  if (existingData) {
-    console.log("Subject already assigned to class:", subjectId, classId);
-    return existingData;
-  }
-  
   console.log("Adding subject to class:", subjectId, classId);
+  
+  // Update the subject to link it to the class
   const { data, error } = await supabase
-    .from("class_subjects")
-    .insert({
-      class_id: classId,
-      subject_id: subjectId,
-      user_id: userData.user?.id
-    })
+    .from("subjects")
+    .update({ class: classId })
+    .eq("id", subjectId)
+    .eq("user_id", userData.user.id)
     .select()
     .single();
 
@@ -49,11 +31,13 @@ export const addSubjectToClass = async ({ classId, subjectId }: { classId: strin
 
 export const removeSubjectFromClass = async ({ classId, subjectId }: { classId: string, subjectId: string }): Promise<void> => {
   console.log("Removing subject from class:", subjectId, classId);
+  
+  // Update the subject to remove the class link
   const { error } = await supabase
-    .from("class_subjects")
-    .delete()
-    .eq("class_id", classId)
-    .eq("subject_id", subjectId);
+    .from("subjects")
+    .update({ class: null })
+    .eq("id", subjectId)
+    .eq("class", classId);
 
   if (error) {
     console.error("Error removing subject from class:", error);

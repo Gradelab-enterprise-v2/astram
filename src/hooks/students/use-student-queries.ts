@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Student } from "@/types/academics";
 import { toast } from "sonner";
+import { fetchStudentsByClass, fetchStudentsEnrolledInClassSubjects } from "./student-api";
 
 export const fetchStudentsBySubject = async (subjectId: string): Promise<Student[]> => {
   console.log("Fetching students by subject ID:", subjectId);
@@ -170,6 +171,38 @@ export const useStudentsWithoutClass = () => {
       onError: (error: Error) => {
         console.error("Error loading students without class:", error);
         toast.error(`Failed to load unassigned students: ${error.message}`);
+      }
+    }
+  });
+};
+
+// Hook to get students by class
+export const useStudentsByClass = (classId: string) => {
+  return useQuery({
+    queryKey: ["students", "by-class", classId],
+    queryFn: () => fetchStudentsByClass(classId),
+    enabled: !!classId,
+    staleTime: 1000 * 60 * 5, // 5 minutes
+    meta: {
+      onError: (error: Error) => {
+        console.error(`Error loading students for class ${classId}:`, error);
+        toast.error(`Failed to load students: ${error.message}`);
+      }
+    }
+  });
+};
+
+// Hook to get students enrolled in subjects within a class
+export const useStudentsEnrolledInClassSubjects = (classId: string) => {
+  return useQuery({
+    queryKey: ["students", "enrolled-in-class-subjects", classId],
+    queryFn: () => fetchStudentsEnrolledInClassSubjects(classId),
+    enabled: !!classId,
+    staleTime: 1000 * 60 * 5, // 5 minutes
+    meta: {
+      onError: (error: Error) => {
+        console.error(`Error loading students enrolled in class subjects ${classId}:`, error);
+        toast.error(`Failed to load students: ${error.message}`);
       }
     }
   });

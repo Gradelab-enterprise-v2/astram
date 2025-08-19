@@ -29,12 +29,7 @@ export function useClasses() {
     console.log("Fetching class by ID:", id);
     const { data, error } = await supabase
       .from("classes")
-      .select(`
-        *,
-        class_subjects (
-          subject:subjects (*)
-        )
-      `)
+      .select("*")
       .eq("id", id)
       .maybeSingle();
 

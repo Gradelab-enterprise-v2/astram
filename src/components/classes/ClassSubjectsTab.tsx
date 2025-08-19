@@ -116,6 +116,20 @@ export function ClassSubjectsTab({ classId, subjects, onAddSubject, onSubjectUpd
       });
       
       toast.success("Students enrolled successfully");
+      
+      // Invalidate relevant queries to refresh the UI
+      queryClient.invalidateQueries({ queryKey: ["subject-enrollments"] });
+      queryClient.invalidateQueries({ queryKey: ["student-enrollments"] });
+      queryClient.invalidateQueries({ queryKey: ["students"] });
+      queryClient.invalidateQueries({ queryKey: ["students", "by-subject"] });
+      queryClient.invalidateQueries({ queryKey: ["students", "by-class"] });
+      queryClient.invalidateQueries({ queryKey: ["students", "enrolled-in-class-subjects"] });
+      
+      // Signal the parent to refresh students list
+      if (onSubjectUpdated) {
+        await onSubjectUpdated();
+      }
+      
       setSelectedSubjectForEnrollment(null);
     } catch (error: any) {
       console.error("Error enrolling students:", error);

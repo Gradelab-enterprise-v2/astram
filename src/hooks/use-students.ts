@@ -8,6 +8,7 @@ import {
   fetchStudentsByDepartment,
   fetchStudentsBySubject,
   fetchStudentsWithoutClass,
+  fetchStudentsEnrolledInClassSubjects,
   getSubjectsForStudent,
   getStudentById
 } from "./students/student-api";
@@ -30,6 +31,7 @@ export function useStudents() {
     fetchStudentsByDepartment,
     fetchStudentsBySubject,
     fetchStudentsWithoutClass,
+    fetchStudentsEnrolledInClassSubjects,
     useStudentsWithoutClass,
     getSubjectsForStudent,
     createStudent: createMutation.mutate,

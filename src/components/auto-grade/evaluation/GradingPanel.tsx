@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAuth } from "@/context/AuthContext";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
+import { EnhancedTextViewer } from "@/components/ui/EnhancedTextViewer";
 
 interface GradingPanelProps {
   currentQuestion: any;
@@ -148,9 +149,10 @@ export function GradingPanel({
             
             <div>
               <h3 className="font-medium mb-2">AI Feedback</h3>
-              <p className="text-sm whitespace-pre-line">
-                {getEnhancedFeedback()}
-              </p>
+              <EnhancedTextViewer 
+                text={getEnhancedFeedback()}
+                className="text-sm"
+              />
             </div>
             
             <div>
@@ -167,27 +169,30 @@ export function GradingPanel({
             <div>
               <h3 className="font-medium mb-2">Raw Extracted Text</h3>
               <ScrollArea className="h-[150px] bg-slate-100 dark:bg-slate-800 rounded-md p-4">
-                <p className="text-sm">
-                  {currentQuestion?.raw_extracted_text || currentQuestion?.answer || "No text was extracted from this answer."}
-                </p>
+                <EnhancedTextViewer 
+                  text={currentQuestion?.raw_extracted_text || currentQuestion?.answer || "No text was extracted from this answer."}
+                  className="text-sm"
+                />
               </ScrollArea>
             </div>
             
             <div>
               <h3 className="font-medium mb-2">Processed Answer Text</h3>
               <ScrollArea className="h-[150px] bg-slate-100 dark:bg-slate-800 rounded-md p-4">
-                <p className="text-sm">
-                  {currentQuestion?.answer || "No processed answer text available."}
-                </p>
+                <EnhancedTextViewer 
+                  text={currentQuestion?.answer || "No processed answer text available."}
+                  className="text-sm"
+                />
               </ScrollArea>
             </div>
             
             <div>
               <h3 className="font-medium mb-2">Expected Answer</h3>
               <ScrollArea className="h-[100px] bg-slate-100 dark:bg-slate-800 rounded-md p-4">
-                <p className="text-sm">
-                  {currentQuestion?.expected_answer || "No expected answer available."}
-                </p>
+                <EnhancedTextViewer 
+                  text={currentQuestion?.expected_answer || "No expected answer available."}
+                  className="text-sm"
+                />
               </ScrollArea>
             </div>
           </TabsContent>

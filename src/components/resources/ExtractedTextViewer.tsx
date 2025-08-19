@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useTestPapers } from "@/hooks/use-test-papers";
+import { EnhancedTextViewer } from "@/components/ui/EnhancedTextViewer";
 
 interface ExtractedTextViewerProps {
   isOpen: boolean;
@@ -219,16 +220,16 @@ export function ExtractedTextViewer({ isOpen, onOpenChange, paper }: ExtractedTe
               )}
             </Button>
           </div>
-          <div className="border p-4 bg-muted/20 rounded-md text-sm font-mono whitespace-pre-wrap mt-4">
-            {extractedText}
+          <div className="border p-4 bg-muted/20 rounded-md text-sm font-mono mt-4">
+            <EnhancedTextViewer text={extractedText} />
           </div>
         </>
       );
     }
     
     return (
-      <div className="border p-4 bg-muted/20 rounded-md text-sm font-mono whitespace-pre-wrap">
-        {extractedText}
+      <div className="border p-4 bg-muted/20 rounded-md text-sm font-mono">
+        <EnhancedTextViewer text={extractedText} />
       </div>
     );
   };

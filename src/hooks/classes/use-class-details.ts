@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Class, Subject, Student } from "@/types/academics";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
+import { fetchStudentsEnrolledInClassSubjects } from "@/hooks/students/student-api";
 
 export function useClassDetails(classId: string | undefined) {
   const { getClassById, deleteClass, isDeleting } = useClasses();
@@ -48,7 +49,7 @@ export function useClassDetails(classId: string | undefined) {
       // Only fetch subjects and students if we have a valid class
       const [classSubjects, classStudents] = await Promise.all([
         getSubjectsByClassId(classId),
-        fetchStudentsByClass(classId)
+        fetchStudentsEnrolledInClassSubjects(classId)
       ]);
       
       // Update state with all fetched data
@@ -72,7 +73,7 @@ export function useClassDetails(classId: string | undefined) {
         setLoading(false);
       }
     }
-  }, [classId, getClassById, getSubjectsByClassId, fetchStudentsByClass, isDataFetched]);
+  }, [classId, getClassById, getSubjectsByClassId, fetchStudentsEnrolledInClassSubjects, isDataFetched]);
 
   // Function to handle retry - reset isDataFetched to allow refetching
   const handleRetry = () => {

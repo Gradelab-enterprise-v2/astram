@@ -21,6 +21,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useStudents } from "@/hooks/use-students";
 import { useSubjects } from "@/hooks/use-subjects";
+import { fetchStudentsEnrolledInClassSubjects } from "@/hooks/students/student-api";
 import { Plus, Trash2, Edit } from "lucide-react";
 import {
   AlertDialog,
@@ -66,7 +67,7 @@ export default function Classes() {
       const classesWithAdditionalData = await Promise.all(
         classes.map(async (cls) => {
           try {
-            const students = await fetchStudentsByClass(cls.id);
+            const students = await fetchStudentsEnrolledInClassSubjects(cls.id);
             const subjects = await getSubjectsByClassId(cls.id);
             
             return {
@@ -93,7 +94,7 @@ export default function Classes() {
       setLoadingCounts(false);
       setIsInitialLoad(false);
     }
-  }, [classes, fetchStudentsByClass, getSubjectsByClassId]);
+  }, [classes, getSubjectsByClassId]);
   
   useEffect(() => {
     loadCountsData();

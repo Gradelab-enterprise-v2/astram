@@ -95,17 +95,12 @@ export default function EditSubject() {
       };
       await updateSubject(subjectData, {
         onSuccess: async () => {
-          if (data.class !== originalClassId) {
+          // If the class has changed and a new class is selected, enroll students
+          if (data.class !== originalClassId && data.class) {
             try {
-              if (originalClassId) {
-                await removeSubjectFromClass({ classId: originalClassId, subjectId: id });
-              }
-              if (data.class) {
-                await addSubjectToClass({ classId: data.class, subjectId: id });
-                await enrollClassStudentsInSubject({ classId: data.class, subjectId: id });
-              }
+              await enrollClassStudentsInSubject({ classId: data.class, subjectId: id });
             } catch (err) {
-              toast.error("Failed to sync class assignment: " + (err as Error).message);
+              toast.error("Failed to enroll students in new class: " + (err as Error).message);
             }
           }
           toast.success("Subject updated successfully");

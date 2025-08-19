@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Loader2, AlertTriangle, FileText, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { EnhancedTextViewer } from "@/components/ui/EnhancedTextViewer";
 
 interface DocumentViewerProps {
   isOpen: boolean;
@@ -191,9 +192,10 @@ export function DocumentViewer({
                       </Button>
                     </div>
                     <div className="flex-1 border rounded p-4 overflow-auto bg-muted/30">
-                      <pre className="whitespace-pre-wrap text-sm font-mono">
-                        {extractedText}
-                      </pre>
+                      <EnhancedTextViewer 
+                        text={extractedText} 
+                        className="font-mono"
+                      />
                     </div>
                   </>
                 ) : (

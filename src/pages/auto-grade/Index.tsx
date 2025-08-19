@@ -52,8 +52,7 @@ export default function AutoGrade() {
   // Filter subjects by class
   const classSubjects = subjects.filter(subject => {
     if (!selectedClassId) return false;
-    const classObj = classes.find(c => c.id === selectedClassId);
-    return classObj && subject.class === classObj.name;
+    return subject.class === selectedClassId;
   });
 
   // Filter tests by subject and class

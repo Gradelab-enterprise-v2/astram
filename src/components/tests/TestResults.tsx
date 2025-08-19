@@ -25,6 +25,38 @@ export function TestResults({ testId, test, testResults, subjectStudents, isLoad
   const queryClient = useQueryClient();
   const [preparingSummary, setPreparingSummary] = useState<string | null>(null);
   const [gradingAll, setGradingAll] = useState(false);
+  const [autoGradeStatuses, setAutoGradeStatuses] = useState<{[key: string]: any}>({});
+
+  // Fetch auto_grade_status for all students when component mounts
+  React.useEffect(() => {
+    const fetchAutoGradeStatuses = async () => {
+      if (!testId || subjectStudents.length === 0) return;
+      
+      try {
+        const { data, error } = await supabase
+          .from("auto_grade_status")
+          .select("student_id, status, score")
+          .eq("test_id", testId)
+          .in("student_id", subjectStudents.map(s => s.id));
+        
+        if (error) {
+          console.error("Error fetching auto grade statuses:", error);
+          return;
+        }
+        
+        const statusMap: {[key: string]: any} = {};
+        data?.forEach(status => {
+          statusMap[status.student_id] = status;
+        });
+        
+        setAutoGradeStatuses(statusMap);
+      } catch (error) {
+        console.error("Error fetching auto grade statuses:", error);
+      }
+    };
+    
+    fetchAutoGradeStatuses();
+  }, [testId, subjectStudents]);
 
   // Handle viewing the assessment summary for a student
   const handleViewSummary = async (studentId: string) => {
@@ -159,6 +191,20 @@ export function TestResults({ testId, test, testResults, subjectStudents, isLoad
       toast.success("Auto grading completed for all students");
       // Refetch test results so UI updates
       queryClient.invalidateQueries({ queryKey: ["test-results", testId] });
+      // Also refetch auto grade statuses
+      const { data, error } = await supabase
+        .from("auto_grade_status")
+        .select("student_id, status, score")
+        .eq("test_id", testId)
+        .in("student_id", subjectStudents.map(s => s.id));
+      
+      if (!error && data) {
+        const statusMap: {[key: string]: any} = {};
+        data.forEach(status => {
+          statusMap[status.student_id] = status;
+        });
+        setAutoGradeStatuses(statusMap);
+      }
     } catch (error) {
       toast.dismiss();
       toast.error(error instanceof Error ? error.message : "Failed to auto grade all students");
@@ -170,6 +216,13 @@ export function TestResults({ testId, test, testResults, subjectStudents, isLoad
   // Get the result for a student or return null
   const getStudentResult = (studentId: string) => {
     return testResults.find(result => result.student_id === studentId);
+  };
+
+  // Check if student has any grading data (either test_results or auto_grade_status)
+  const hasGradingData = (studentId: string) => {
+    const testResult = getStudentResult(studentId);
+    const autoGradeStatus = autoGradeStatuses[studentId];
+    return testResult || (autoGradeStatus && autoGradeStatus.status === 'completed');
   };
 
   return (
@@ -201,9 +254,10 @@ export function TestResults({ testId, test, testResults, subjectStudents, isLoad
               <TableBody>
                 {subjectStudents.map((student) => {
                   const result = getStudentResult(student.id);
+                  const autoGradeStatus = autoGradeStatuses[student.id];
                   const percentage = result 
                     ? (result.marks_obtained / test.max_marks) * 100 
-                    : 0;
+                    : (autoGradeStatus?.score ? (autoGradeStatus.score / test.max_marks) * 100 : 0);
                   const passed = percentage >= 40; // Assuming 40% is pass mark
                   
                   return (
@@ -211,13 +265,14 @@ export function TestResults({ testId, test, testResults, subjectStudents, isLoad
                       <TableCell>{student.roll_number || "N/A"}</TableCell>
                       <TableCell>{student.name || "N/A"}</TableCell>
                       <TableCell className="text-right">
-                        {result ? `${result.marks_obtained} / ${test.max_marks}` : "No result"}
+                        {result ? `${result.marks_obtained} / ${test.max_marks}` : 
+                         autoGradeStatus?.score ? `${autoGradeStatus.score} / ${test.max_marks}` : "No result"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {result ? `${percentage.toFixed(2)}%` : "N/A"}
+                        {result || autoGradeStatus?.score ? `${percentage.toFixed(2)}%` : "N/A"}
                       </TableCell>
                       <TableCell className="text-right">
-                        {result ? (
+                        {result || autoGradeStatus?.score ? (
                           passed ? (
                             <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
                               <Check className="w-3 h-3 mr-1" /> Pass
@@ -236,7 +291,7 @@ export function TestResults({ testId, test, testResults, subjectStudents, isLoad
                           variant="outline" 
                           size="sm"
                           onClick={() => handleViewSummary(student.id)}
-                          disabled={!result || preparingSummary === student.id}
+                          disabled={!hasGradingData(student.id) || preparingSummary === student.id}
                         >
                           <BarChart className="h-4 w-4 mr-2" /> 
                           {preparingSummary === student.id ? "Preparing..." : "View Summary"}

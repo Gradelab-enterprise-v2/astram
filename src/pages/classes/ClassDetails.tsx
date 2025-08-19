@@ -201,7 +201,7 @@ export default function ClassDetails() {
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-semibold flex items-center">
                     <Users className="mr-2 h-5 w-5 text-primary" />
-                    Enrolled Students ({students?.length || 0})
+                    Students Enrolled in Class Subjects ({students?.length || 0})
                   </h3>
                   <div className="flex gap-2">
                     <Button size="sm" onClick={() => navigate("/students/new")}>Add New Student</Button>
@@ -269,7 +269,7 @@ export default function ClassDetails() {
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    No students enrolled in this class yet.
+                    No students enrolled in subjects within this class yet.
                   </div>
                 )}
               </div>

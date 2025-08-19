@@ -48,6 +48,7 @@ import EditSubject from "./pages/subjects/EditSubject";
 import ResetPassword from "./pages/ResetPassword";
 import GoogleClassroomIntegration from "@/pages/GoogleClassroomIntegration";
 import GoogleClassroomCallback from "@/pages/GoogleClassroomCallback";
+import TestEnhancedTextViewer from "@/pages/TestEnhancedTextViewer";
 
 function IntercomIntegration() {
   const { user } = useAuth();
@@ -225,6 +226,11 @@ function App() {
             } />
             <Route path="/google-classroom/callback" element={
               <GoogleClassroomCallback />
+            } />
+
+            {/* Test Routes */}
+            <Route path="/test-enhanced-text" element={
+              <AppLayout><TestEnhancedTextViewer /></AppLayout>
             } />
 
             {/* Catch-all route for redirecting to dashboard if authenticated or signin if not, but allow reset-password/recovery */}
