@@ -1,7 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { TestPaper } from "@/types/test-papers";
 import { formatPaperData } from "./test-paper-base";
-import { convertPdfToImages, dataUrlToBlob, validateFile } from "@/utils/pdf-processor";
+import { convertPdfToImages, dataUrlToBlob, validateFile, getPdfTroubleshootingTips } from "@/utils/pdf-processor";
 import { toast } from "sonner";
 import { ensureBucket, userHasBucketAccess } from "@/utils/initialize-storage";
 
@@ -74,6 +74,8 @@ export const extractText = async (paperId: string): Promise<TestPaper> => {
     const pdfBlob = await pdfResponse.blob();
     const pdfFile = new File([pdfBlob], `${paper.title}.pdf`, { type: 'application/pdf' });
     
+    console.log(`Downloaded PDF file: ${pdfFile.name}, size: ${pdfFile.size} bytes, type: ${pdfFile.type}`);
+    
     // Validate the file
     const validation = validateFile(pdfFile);
     if (!validation.isValid) {
@@ -93,12 +95,42 @@ export const extractText = async (paperId: string): Promise<TestPaper> => {
       .eq("id", paperId);
       
     // Convert PDF to images with optimized settings for OCR
-    const imageDataUrls = await convertPdfToImages(pdfFile, {
-      quality: 0.95,     // Higher quality for OCR
-      grayscale: true,   // Keep grayscale for better OCR
-      maxWidth: 2000,    // Higher resolution for OCR
-      imageFormat: 'png' // Using PNG format for better OCR compatibility
-    });
+    let imageDataUrls;
+    try {
+      imageDataUrls = await convertPdfToImages(pdfFile, {
+        quality: 0.95,     // Higher quality for OCR
+        grayscale: true,   // Keep grayscale for better OCR
+        maxWidth: 2000,    // Higher resolution for OCR
+        imageFormat: 'png' // Using PNG format for better OCR compatibility
+      });
+    } catch (pdfError) {
+      console.error('PDF conversion error:', pdfError);
+      
+      // Get troubleshooting tips for the specific error
+      const troubleshootingTips = getPdfTroubleshootingTips(pdfError.message);
+      
+      // Create a detailed error message with troubleshooting tips
+      const errorMessage = `PDF processing failed: ${pdfError.message}
+
+Troubleshooting tips:
+${troubleshootingTips.map((tip, index) => `${index + 1}. ${tip}`).join('\n')}
+
+Please try uploading a different PDF file.`;
+      
+      // Update the database with the detailed error
+      await supabase
+        .from("test_papers")
+        .update({
+          extracted_text: errorMessage,
+          has_extracted_text: false
+        })
+        .eq("id", paperId);
+      
+      // Show a toast with the main error
+      toast.error(`PDF processing failed: ${pdfError.message}`);
+      
+      throw new Error(`Failed to convert PDF to images: ${pdfError.message}`);
+    }
     
     console.log(`Converted PDF to ${imageDataUrls.length} images`);
     
@@ -353,7 +385,7 @@ export const extractText = async (paperId: string): Promise<TestPaper> => {
     
     // Call the extract-text Supabase Edge Function
     // Process in batches to improve reliability
-    const batchSize = 10; // Process 10 images at a time for better efficiency
+    const batchSize = 5; // Reduced batch size to 5 images at a time for better reliability
     const batches = [];
     
     for (let i = 0; i < imageUrls.length; i += batchSize) {
@@ -375,33 +407,99 @@ export const extractText = async (paperId: string): Promise<TestPaper> => {
         })
         .eq("id", paperId);
       
-      try {
-        const { data, error } = await supabase.functions.invoke("extract-text", {
-          body: { 
-            documentType: 'question',
-            paperId,
-            imageUrls: batchUrls
+      // Retry logic for batch processing
+      let batchSuccess = false;
+      let retryCount = 0;
+      const maxRetries = 2;
+      
+      while (!batchSuccess && retryCount <= maxRetries) {
+        try {
+          console.log(`Processing batch ${i + 1} (attempt ${retryCount + 1})...`);
+          
+          const { data, error } = await supabase.functions.invoke("extract-text", {
+            body: { 
+              documentType: 'question',
+              paperId,
+              imageUrls: batchUrls
+            }
+          });
+          
+          if (error) {
+            console.error(`Error in batch ${i + 1} (attempt ${retryCount + 1}):`, error);
+            if (retryCount < maxRetries) {
+              retryCount++;
+              console.log(`Retrying batch ${i + 1} in 5 seconds... (attempt ${retryCount + 1})`);
+              
+              // Update progress to show retry attempt
+              await supabase
+                .from("test_papers")
+                .update({
+                  extracted_text: `Text extraction in progress: Retrying batch ${i + 1} of ${batches.length} (attempt ${retryCount + 1})...`
+                })
+                .eq("id", paperId);
+              
+              await new Promise(resolve => setTimeout(resolve, 5000));
+              continue;
+            } else {
+              allExtractedText.push(`[Error processing pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}: ${error.message || 'Unknown error'}]`);
+              break;
+            }
           }
-        });
-        
-        if (error) {
-          console.error(`Error in batch ${i + 1}:`, error);
-          allExtractedText.push(`[Error processing pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}: ${error.message || 'Unknown error'}]`);
-          continue;
-        }
-        
-        if (data && data.extractedText) {
-          allExtractedText.push(data.extractedText);
-          // Capture model information if available
-          if (data.model) {
-            modelUsed = data.model;
+          
+          if (data && data.extractedText) {
+            allExtractedText.push(data.extractedText);
+            // Capture model information if available
+            if (data.model) {
+              modelUsed = data.model;
+            }
+            batchSuccess = true;
+            
+            // Update progress to show successful batch completion
+            await supabase
+              .from("test_papers")
+              .update({
+                extracted_text: `Text extraction in progress: Completed batch ${i + 1} of ${batches.length} successfully...`
+              })
+              .eq("id", paperId);
+          } else {
+            allExtractedText.push(`[No text extracted from pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}]`);
+            batchSuccess = true;
+            
+            // Update progress to show batch completion (even if no text extracted)
+            await supabase
+              .from("test_papers")
+              .update({
+                extracted_text: `Text extraction in progress: Completed batch ${i + 1} of ${batches.length} (no text found)...`
+              })
+              .eq("id", paperId);
           }
-        } else {
-          allExtractedText.push(`[No text extracted from pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}]`);
+        } catch (batchError) {
+          console.error(`Error processing batch ${i + 1} (attempt ${retryCount + 1}):`, batchError);
+          if (retryCount < maxRetries) {
+            retryCount++;
+            console.log(`Retrying batch ${i + 1} in 5 seconds... (attempt ${retryCount + 1})`);
+            
+            // Update progress to show retry attempt
+            await supabase
+              .from("test_papers")
+              .update({
+                extracted_text: `Text extraction in progress: Retrying batch ${i + 1} of ${batches.length} (attempt ${retryCount + 1}) due to error...`
+              })
+              .eq("id", paperId);
+            
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            continue;
+          } else {
+            allExtractedText.push(`[Error processing pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}: ${batchError.message || 'Unknown error'}]`);
+            break;
+          }
         }
-      } catch (batchError) {
-        console.error(`Error processing batch ${i + 1}:`, batchError);
-        allExtractedText.push(`[Error processing pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}: ${batchError.message || 'Unknown error'}]`);
+      }
+      
+      // Add a small delay between batches to prevent overwhelming the Edge Function
+      if (i < batches.length - 1) {
+        console.log(`Waiting 2 seconds before processing next batch...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
       // Update paper with partial results for better user experience

@@ -29,9 +29,74 @@ export async function convertPdfToImages(
     
     console.log("Starting PDF conversion process...");
     
-    // Load the PDF file
+    // Validate file
+    if (!file || file.size === 0) {
+      throw new Error('PDF file is empty or invalid');
+    }
+    
+    if (file.type !== 'application/pdf') {
+      throw new Error('File is not a PDF. Please upload a valid PDF file.');
+    }
+    
+    console.log(`PDF file size: ${file.size} bytes`);
+    
+    // Check PDF header for basic validity
+    const headerCheck = await checkPdfHeader(file);
+    if (!headerCheck.isValid) {
+      throw new Error(headerCheck.message || 'PDF file validation failed');
+    }
+    
+    // Load the PDF file with better error handling
     const arrayBuffer = await file.arrayBuffer();
-    const pdf = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+    
+    if (arrayBuffer.byteLength === 0) {
+      throw new Error('PDF file appears to be empty after reading');
+    }
+    
+    console.log(`PDF array buffer size: ${arrayBuffer.byteLength} bytes`);
+    
+    // Try to load the PDF with more detailed error handling
+    let pdf;
+    let pdfError;
+    
+    // First attempt with full configuration
+    try {
+      pdf = await pdfjs.getDocument({ 
+        data: arrayBuffer,
+        // Add additional options for better compatibility
+        cMapUrl: 'https://unpkg.com/pdfjs-dist@2.16.105/cmaps/',
+        cMapPacked: true,
+        standardFontDataUrl: 'https://unpkg.com/pdfjs-dist@2.16.105/standard_fonts/'
+      }).promise;
+    } catch (error) {
+      pdfError = error;
+      console.warn('First PDF loading attempt failed, trying with minimal configuration...');
+      
+      // Second attempt with minimal configuration
+      try {
+        pdf = await pdfjs.getDocument({ 
+          data: arrayBuffer,
+          // Minimal configuration for problematic PDFs
+          disableFontFace: true,
+          disableRange: true,
+          disableStream: true
+        }).promise;
+        console.log('PDF loaded successfully with minimal configuration');
+      } catch (secondError) {
+        console.error('Both PDF loading attempts failed:', { firstError: pdfError, secondError });
+        
+        // Provide more specific error messages
+        if (secondError.name === 'InvalidPDFException' || pdfError.name === 'InvalidPDFException') {
+          throw new Error('The PDF file appears to be corrupted or has an invalid structure. Please try uploading a different PDF file.');
+        } else if (secondError.name === 'PasswordException' || pdfError.name === 'PasswordException') {
+          throw new Error('The PDF file is password-protected. Please remove the password protection and try again.');
+        } else if (secondError.message.includes('Invalid PDF') || pdfError.message.includes('Invalid PDF')) {
+          throw new Error('The uploaded file is not a valid PDF or is corrupted. Please check the file and try again.');
+        } else {
+          throw new Error(`Failed to load PDF after multiple attempts. Last error: ${secondError.message}`);
+        }
+      }
+    }
     const numPages = pdf.numPages;
     
     console.log(`PDF loaded with ${numPages} pages, beginning conversion to images`);
@@ -41,34 +106,36 @@ export async function convertPdfToImages(
     
     for (let i = 1; i <= numPages; i++) {
       console.log(`Processing page ${i} of ${numPages}`);
-      const page = await pdf.getPage(i);
       
-      // Set viewport with increased scale for better OCR quality
-      const viewport = page.getViewport({ scale: 2.5 });
-      const canvas = document.createElement('canvas');
-      const ctx = canvas.getContext('2d');
-      
-      if (!ctx) {
-        throw new Error('Failed to get canvas context');
-      }
-      
-      // Scale down if needed, but maintain minimum scale for OCR quality
-      let scale = 1;
-      if (maxWidth && viewport.width > maxWidth) {
-        scale = maxWidth / viewport.width;
-      }
-      
-      const scaledViewport = page.getViewport({ scale: Math.max(scale, 1.8) }); // Ensure minimum scale
-      canvas.width = scaledViewport.width;
-      canvas.height = scaledViewport.height;
-      
-      // Render the page to the canvas with high quality
-      await page.render({
-        canvasContext: ctx,
-        viewport: scaledViewport,
-        // @ts-ignore This property exists but might not be in TypeScript definitions
-        intent: 'print', // Use 'print' for higher quality rendering
-      }).promise;
+      try {
+        const page = await pdf.getPage(i);
+        
+        // Set viewport with increased scale for better OCR quality
+        const viewport = page.getViewport({ scale: 2.5 });
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        if (!ctx) {
+          throw new Error('Failed to get canvas context');
+        }
+        
+        // Scale down if needed, but maintain minimum scale for OCR quality
+        let scale = 1;
+        if (maxWidth && viewport.width > maxWidth) {
+          scale = maxWidth / viewport.width;
+        }
+        
+        const scaledViewport = page.getViewport({ scale: Math.max(scale, 1.8) }); // Ensure minimum scale
+        canvas.width = scaledViewport.width;
+        canvas.height = scaledViewport.height;
+        
+        // Render the page to the canvas with high quality
+        await page.render({
+          canvasContext: ctx,
+          viewport: scaledViewport,
+          // @ts-ignore This property exists but might not be in TypeScript definitions
+          intent: 'print', // Use 'print' for higher quality rendering
+        }).promise;
       
       // Apply grayscale filter if requested
       if (grayscale) {
@@ -91,6 +158,11 @@ export async function convertPdfToImages(
       // Always use PNG format for better OCR clarity, especially for answer keys
       const dataUrl = canvas.toDataURL('image/png', quality);
       imageDataUrls.push(dataUrl);
+      
+      } catch (pageError) {
+        console.error(`Error processing page ${i}:`, pageError);
+        throw new Error(`Failed to process page ${i}: ${pageError.message}`);
+      }
     }
     
     console.log(`Converted ${numPages} PDF pages to images successfully`);
@@ -227,6 +299,106 @@ export function validateFile(file: File): { isValid: boolean; message?: string }
   }
   
   return { isValid: true };
+}
+
+/**
+ * Check if a PDF file appears to be valid by reading its header
+ */
+export async function checkPdfHeader(file: File): Promise<{ isValid: boolean; message?: string }> {
+  try {
+    const arrayBuffer = await file.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    console.log(`Checking PDF header for file: ${file.name} (${file.size} bytes)`);
+    console.log(`Array buffer size: ${arrayBuffer.byteLength} bytes`);
+    
+    // Check for PDF magic number (%PDF)
+    const header = new TextDecoder().decode(uint8Array.slice(0, 8));
+    console.log(`File header (first 8 bytes): "${header}"`);
+    
+    if (!header.startsWith('%PDF')) {
+      // Try to identify what type of file this might be
+      let fileType = 'unknown';
+      if (header.startsWith('PK')) {
+        fileType = 'ZIP file';
+      } else if (header.startsWith('GIF')) {
+        fileType = 'GIF image';
+      } else if (header.startsWith('\xFF\xD8\xFF')) {
+        fileType = 'JPEG image';
+      } else if (header.startsWith('\x89PNG')) {
+        fileType = 'PNG image';
+      } else if (header.startsWith('BM')) {
+        fileType = 'BMP image';
+      } else if (header.startsWith('RIFF')) {
+        fileType = 'WAV audio or other RIFF file';
+      } else if (header.startsWith('<!DOCTYPE') || header.startsWith('<html')) {
+        fileType = 'HTML file';
+      } else if (header.startsWith('{\"') || header.startsWith('{')) {
+        fileType = 'JSON file';
+      } else if (header.startsWith('<?xml')) {
+        fileType = 'XML file';
+      }
+      
+      return { 
+        isValid: false, 
+        message: `File does not appear to be a valid PDF (missing PDF header). The file appears to be a ${fileType}. Please upload a valid PDF file.` 
+      };
+    }
+    
+    // Check for EOF marker
+    const footer = new TextDecoder().decode(uint8Array.slice(-8));
+    console.log(`File footer (last 8 bytes): "${footer}"`);
+    
+    if (!footer.includes('%%EOF')) {
+      console.warn('PDF may be incomplete (missing EOF marker)');
+    }
+    
+    return { isValid: true };
+  } catch (error) {
+    return { isValid: false, message: `Error reading PDF header: ${error.message}` };
+  }
+}
+
+/**
+ * Get troubleshooting tips for PDF issues
+ */
+export function getPdfTroubleshootingTips(errorMessage: string): string[] {
+  const tips = [
+    'Make sure the file is actually a PDF and not a renamed image or document',
+    'Try opening the PDF in a PDF viewer to ensure it\'s not corrupted',
+    'If the PDF is password-protected, remove the password protection',
+    'Try converting the PDF to a different format and back to PDF',
+    'Ensure the PDF file is not empty or corrupted during upload',
+    'Check if the PDF was created with a compatible PDF generator'
+  ];
+  
+  if (errorMessage.includes('Invalid PDF structure')) {
+    tips.unshift('The PDF file appears to be corrupted or has an invalid structure');
+    tips.unshift('Try re-downloading or re-creating the PDF file');
+  }
+  
+  if (errorMessage.includes('password')) {
+    tips.unshift('The PDF file is password-protected');
+    tips.unshift('Please remove the password protection before uploading');
+  }
+  
+  if (errorMessage.includes('missing PDF header')) {
+    tips.unshift('The file does not have the required PDF header (%PDF)');
+    tips.unshift('This usually means the file is not actually a PDF or is corrupted');
+    tips.unshift('Try re-uploading the original PDF file');
+  }
+  
+  if (errorMessage.includes('ZIP file')) {
+    tips.unshift('The uploaded file appears to be a ZIP file, not a PDF');
+    tips.unshift('Please extract the PDF from the ZIP file and upload the PDF directly');
+  }
+  
+  if (errorMessage.includes('image')) {
+    tips.unshift('The uploaded file appears to be an image file, not a PDF');
+    tips.unshift('Please convert the image to PDF or upload a proper PDF file');
+  }
+  
+  return tips;
 }
 
 /**

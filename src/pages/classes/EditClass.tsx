@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { useClasses } from "@/hooks/use-classes";
+import { useSubjects } from "@/hooks/use-subjects";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const classSchema = z.object({
@@ -27,7 +28,9 @@ export default function EditClass() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { useClassById, updateClass, isUpdating } = useClasses();
+  const { getSubjectsByClassId } = useSubjects();
   const { data: classData, isLoading, error } = useClassById(id || "");
+  const [classSubjects, setClassSubjects] = useState<any[]>([]);
 
   const form = useForm<z.infer<typeof classSchema>>({
     resolver: zodResolver(classSchema),
@@ -43,8 +46,17 @@ export default function EditClass() {
           name: classData.name,
           year: classData.year,
         });
+        
+        // Fetch subjects for this class
+        if (id) {
+          getSubjectsByClassId(id).then(subjects => {
+            setClassSubjects(subjects);
+          }).catch(error => {
+            console.error("Error fetching subjects for class:", error);
+          });
+        }
     }
-  }, [classData, form]);
+  }, [classData, form, id, getSubjectsByClassId]);
 
   const onSubmit = (data: z.infer<typeof classSchema>) => {
     if (!id) return;
@@ -144,7 +156,7 @@ export default function EditClass() {
         </CardContent>
       </Card>
 
-      {classData?.class_subjects && classData.class_subjects.length > 0 && (
+      {classSubjects.length > 0 && (
         <Card>
           <CardHeader>
             <CardTitle>Assigned Subjects</CardTitle>
@@ -159,10 +171,10 @@ export default function EditClass() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {classData.class_subjects.map((cs: any) => (
-                  <TableRow key={cs.subject.id}>
-                    <TableCell>{cs.subject.name}</TableCell>
-                    <TableCell>{cs.subject.code}</TableCell>
+                {classSubjects.map((subject: any) => (
+                  <TableRow key={subject.id}>
+                    <TableCell>{subject.name}</TableCell>
+                    <TableCell>{subject.code}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

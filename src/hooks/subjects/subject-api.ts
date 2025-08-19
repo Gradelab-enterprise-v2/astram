@@ -5,16 +5,7 @@ export const fetchSubjects = async (): Promise<Subject[]> => {
   console.log("Fetching all subjects...");
   const { data, error } = await supabase
     .from("subjects")
-    .select(`
-      *,
-      class_subjects (
-        class:classes (
-          id,
-          name,
-          year
-        )
-      )
-    `)
+    .select("*")
     .order("name");
 
   if (error) {
@@ -22,14 +13,8 @@ export const fetchSubjects = async (): Promise<Subject[]> => {
     throw new Error(error.message);
   }
 
-  // Transform the data to include class information
-  const subjectsWithClass = data?.map(subject => ({
-    ...subject,
-    class: subject.class_subjects?.[0]?.class?.name || "No Class Assigned"
-  })) || [];
-
-  console.log("Subjects fetched:", subjectsWithClass.length);
-  return subjectsWithClass;
+  console.log("Subjects fetched:", data?.length || 0);
+  return data || [];
 };
 
 export const getSubjectById = async (id: string): Promise<Subject> => {
@@ -51,19 +36,18 @@ export const getSubjectById = async (id: string): Promise<Subject> => {
 export const getSubjectsByClassId = async (classId: string): Promise<Subject[]> => {
   console.log("Fetching subjects by class ID:", classId);
   
-  const { data: classSubjectsData, error: classSubjectsError } = await supabase
-    .from("class_subjects")
-    .select("subject:subjects(*)")
-    .eq("class_id", classId);
+  const { data: subjects, error: subjectsError } = await supabase
+    .from("subjects")
+    .select("*")
+    .eq("class", classId);
 
-  if (classSubjectsError) {
-    console.error("Error fetching subjects for class:", classSubjectsError);
-    throw new Error(classSubjectsError.message);
+  if (subjectsError) {
+    console.error("Error fetching subjects for class:", subjectsError);
+    throw new Error(subjectsError.message);
   }
 
-  const subjects = classSubjectsData?.map(item => (item.subject as unknown) as Subject) || [];
-  console.log("Subjects fetched for class:", subjects.length);
-  return subjects;
+      console.log("Subjects fetched for class:", subjects?.length || 0);
+    return subjects || [];
 };
 
 export const getStudentsForSubject = async (subjectId: string): Promise<Student[]> => {
@@ -82,24 +66,34 @@ export const getStudentsForSubject = async (subjectId: string): Promise<Student[
 };
 
 export const getClassForSubject = async (subjectId: string) => {
-  const { data: classSubjectData, error: classSubjectError } = await supabase
-    .from("class_subjects")
-    .select(`
-      class:classes (
-        id,
-        name,
-        year
-      )
-    `)
-    .eq("subject_id", subjectId)
+  const { data: subjectData, error: subjectError } = await supabase
+    .from("subjects")
+    .select("class")
+    .eq("id", subjectId)
     .maybeSingle();
 
-  if (classSubjectError) {
-    console.error("Error fetching class for subject:", classSubjectError);
-    throw new Error(classSubjectError.message);
+  if (subjectError) {
+    console.error("Error fetching class for subject:", subjectError);
+    throw new Error(subjectError.message);
   }
 
-  return classSubjectData?.class || null;
+  // If we have a class ID, fetch the class details
+  if (subjectData?.class) {
+    const { data: classData, error: classError } = await supabase
+      .from("classes")
+      .select("id, name, year")
+      .eq("id", subjectData.class)
+      .maybeSingle();
+
+    if (classError) {
+      console.error("Error fetching class details:", classError);
+      return null;
+    }
+
+    return classData;
+  }
+
+  return null;
 };
 
 export const createSubject = async (subject: Omit<Subject, "id" | "user_id" | "created_at" | "updated_at">): Promise<Subject> => {

@@ -43,6 +43,34 @@ serve(async (req) => {
     console.log("Input lengths - Question paper:", questionPaper?.length || 0, 
                 "Answer key:", answerKey?.length || 0, 
                 "Student sheet:", studentAnswerSheet?.length || 0);
+    
+    // Check if inputs are too large and truncate if necessary
+    const MAX_INPUT_LENGTH = 50000; // 50KB limit per input
+    const MAX_TOTAL_LENGTH = 150000; // 150KB total limit
+    
+    let truncatedQuestionPaper = questionPaper;
+    let truncatedAnswerKey = answerKey;
+    let truncatedStudentAnswerSheet = studentAnswerSheet;
+    
+    if (questionPaper && questionPaper.length > MAX_INPUT_LENGTH) {
+      console.warn("Question paper too large, truncating from", questionPaper.length, "to", MAX_INPUT_LENGTH);
+      truncatedQuestionPaper = questionPaper.substring(0, MAX_INPUT_LENGTH) + "\n\n[Content truncated due to size limits]";
+    }
+    
+    if (answerKey && answerKey.length > MAX_INPUT_LENGTH) {
+      console.warn("Answer key too large, truncating from", answerKey.length, "to", MAX_INPUT_LENGTH);
+      truncatedAnswerKey = answerKey.substring(0, MAX_INPUT_LENGTH) + "\n\n[Content truncated due to size limits]";
+    }
+    
+    if (studentAnswerSheet && studentAnswerSheet.length > MAX_INPUT_LENGTH) {
+      console.warn("Student answer sheet too large, truncating from", studentAnswerSheet.length, "to", MAX_INPUT_LENGTH);
+      truncatedStudentAnswerSheet = studentAnswerSheet.substring(0, MAX_INPUT_LENGTH) + "\n\n[Content truncated due to size limits]";
+    }
+    
+    const totalLength = (truncatedQuestionPaper?.length || 0) + (truncatedAnswerKey?.length || 0) + (truncatedStudentAnswerSheet?.length || 0);
+    if (totalLength > MAX_TOTAL_LENGTH) {
+      console.warn("Total input length", totalLength, "exceeds limit", MAX_TOTAL_LENGTH, "- evaluation may fail");
+    }
 
     // Create the system prompt for evaluation with explicit JSON format requirements
     const systemPrompt = `
@@ -116,13 +144,13 @@ serve(async (req) => {
     // Create the user prompt with the evaluation data
     const userPrompt = `
       Question Paper:
-      ${questionPaper}
+      ${truncatedQuestionPaper}
       
       Answer Key:
-      ${answerKey}
+      ${truncatedAnswerKey}
       
       Student Answer Sheet:
-      ${studentAnswerSheet}
+      ${truncatedStudentAnswerSheet}
       
       Student Information:
       - Name: ${studentInfo.name}
@@ -172,7 +200,7 @@ serve(async (req) => {
             ],
             temperature: 0.1, // Lower temperature for more consistent JSON formatting
             response_format: { type: "json_object" }, // Explicitly request JSON format
-            max_tokens: 4000,
+            max_tokens: 8000,
           });
         } catch (azureError) {
           console.error("Azure OpenAI SDK error:", azureError);
@@ -196,7 +224,7 @@ serve(async (req) => {
             ],
             temperature: 0.1,
             response_format: { type: "json_object" },
-            max_tokens: 4000,
+            max_tokens: 8000,
           }),
           signal: controller.signal
         });
@@ -248,6 +276,11 @@ serve(async (req) => {
         // Remove any BOM characters that might be present
         let cleanedContent = evaluationResultContent.replace(/^\uFEFF/, '');
         
+        // Log the full content length for debugging
+        console.log("Full response length:", cleanedContent.length);
+        console.log("Response preview (first 200 chars):", cleanedContent.substring(0, 200));
+        console.log("Response preview (last 200 chars):", cleanedContent.substring(Math.max(0, cleanedContent.length - 200)));
+        
         // Check if it starts with something that's not valid JSON start character
         if (cleanedContent.charAt(0) !== '{' && cleanedContent.charAt(0) !== '[') {
           console.error("Content doesn't start with valid JSON:", cleanedContent.substring(0, 100));
@@ -262,7 +295,42 @@ serve(async (req) => {
           }
         }
         
-        parsedResult = JSON.parse(cleanedContent);
+        // Try to parse with detailed error information
+        try {
+          parsedResult = JSON.parse(cleanedContent);
+        } catch (parseError) {
+          console.error("JSON parse error details:", parseError);
+          console.error("Error position:", parseError.message);
+          
+          // Try to identify the problematic area
+          const errorMatch = parseError.message.match(/position (\d+)/);
+          if (errorMatch) {
+            const position = parseInt(errorMatch[1]);
+            const start = Math.max(0, position - 50);
+            const end = Math.min(cleanedContent.length, position + 50);
+            console.error("Problematic area around position", position, ":", cleanedContent.substring(start, end));
+          }
+          
+          // Try to fix common JSON issues
+          let fixedContent = cleanedContent;
+          
+          // Try to find the last complete object if the response was truncated
+          const lastBraceIndex = fixedContent.lastIndexOf('}');
+          if (lastBraceIndex > 0) {
+            fixedContent = fixedContent.substring(0, lastBraceIndex + 1);
+            console.log("Attempting to parse truncated content ending at position:", lastBraceIndex);
+            
+            try {
+              parsedResult = JSON.parse(fixedContent);
+              console.log("Successfully parsed truncated content");
+            } catch (truncatedError) {
+              console.error("Failed to parse even truncated content:", truncatedError);
+              throw new Error(`JSON parsing failed: ${parseError.message}. Response may be truncated or malformed.`);
+            }
+          } else {
+            throw new Error(`JSON parsing failed: ${parseError.message}. Response may be truncated or malformed.`);
+          }
+        }
         
         // Validate parsed result has the expected structure
         if (!parsedResult.student_name || !Array.isArray(parsedResult.answers)) {

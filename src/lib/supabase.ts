@@ -17,10 +17,14 @@ export const supabase = createClient(
         const fetchWithRetry = async (attempt = 1, maxAttempts = 3): Promise<Response> => {
           try {
             const controller = new AbortController();
+            // Check if this is an edge function call and set appropriate timeout
+            const isEdgeFunction = url.toString().includes('/functions/v1/');
+            const timeoutMs = isEdgeFunction ? 600000 : 60000; // 10 minutes for edge functions, 1 minute for API
+            
             const timeoutId = setTimeout(() => {
-              console.warn(`Request timeout reached after 30 seconds, aborting attempt ${attempt}`);
-              controller.abort(new Error("Request timeout after 30 seconds"));
-            }, 60000);
+              console.warn(`Request timeout reached after ${timeoutMs/1000} seconds, aborting attempt ${attempt}`);
+              controller.abort(new Error(`Request timeout after ${timeoutMs/1000} seconds`));
+            }, timeoutMs);
             
             const fetchOptions = {
               ...options,

@@ -14,6 +14,7 @@ import { useStudentSheets } from "@/hooks/use-student-sheets";
 import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
+import { EnhancedTextViewer } from "@/components/ui/EnhancedTextViewer";
 
 interface AnswerSheetViewerProps {
   isOpen: boolean;
@@ -173,9 +174,10 @@ export function AnswerSheetViewer({
                       return (
                         <div key={index} className="bg-white dark:bg-gray-800 p-4 rounded-lg">
                           <h3 className="font-semibold mb-2">Page {index}</h3>
-                          <pre className="whitespace-pre-wrap font-mono text-sm">
-                            {pageText.trim()}
-                          </pre>
+                          <EnhancedTextViewer 
+                            text={pageText.trim()} 
+                            className="font-mono text-sm"
+                          />
                         </div>
                       );
                     })}

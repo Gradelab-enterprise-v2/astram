@@ -10,8 +10,11 @@ export function useSubjectEnrollments() {
   const { fetchStudentsByClass } = useStudents();
 
   const enrollClassStudentsInSubject = async ({ classId, subjectId }: { classId: string; subjectId: string }) => {
+    console.log(`Starting enrollment for class ${classId} and subject ${subjectId}`);
+    
     // Get all students in the class
     const students = await fetchStudentsByClass(classId);
+    console.log(`Found ${students?.length || 0} students in class ${classId}`);
     
     if (!students || students.length === 0) {
       throw new Error("No students found in this class");
@@ -25,33 +28,65 @@ export function useSubjectEnrollments() {
       throw new Error("User not authenticated");
     }
 
+    let enrolledCount = 0;
+    let skippedCount = 0;
+    const errors: string[] = [];
+
     // Create enrollment records for each student
-    const enrollmentPromises = students.map(async (student) => {
-      // Check if enrollment already exists
-      const { data: existingEnrollment } = await supabase
-        .from("subject_enrollments")
-        .select("*")
-        .eq("student_id", student.id)
-        .eq("subject_id", subjectId);
+    for (const student of students) {
+      try {
+        // Check if enrollment already exists
+        const { data: existingEnrollment, error: checkError } = await supabase
+          .from("subject_enrollments")
+          .select("*")
+          .eq("student_id", student.id)
+          .eq("subject_id", subjectId)
+          .eq("user_id", userId);
 
-      // If enrollment already exists, skip
-      if (existingEnrollment && existingEnrollment.length > 0) {
-        return null;
+        if (checkError) {
+          console.error(`Error checking existing enrollment for student ${student.id}:`, checkError);
+          errors.push(`Failed to check enrollment for ${student.name}: ${checkError.message}`);
+          continue;
+        }
+
+        // If enrollment already exists, skip
+        if (existingEnrollment && existingEnrollment.length > 0) {
+          skippedCount++;
+          continue;
+        }
+
+        // Create new enrollment
+        const { error: insertError } = await supabase
+          .from("subject_enrollments")
+          .insert({
+            student_id: student.id,
+            subject_id: subjectId,
+            user_id: userId
+          });
+
+        if (insertError) {
+          console.error(`Error enrolling student ${student.id}:`, insertError);
+          errors.push(`Failed to enroll ${student.name}: ${insertError.message}`);
+        } else {
+          enrolledCount++;
+        }
+      } catch (error) {
+        console.error(`Error processing student ${student.id}:`, error);
+        errors.push(`Failed to process ${student.name}: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
+    }
 
-      // Create new enrollment
-      return supabase
-        .from("subject_enrollments")
-        .insert({
-          student_id: student.id,
-          subject_id: subjectId,
-          user_id: userId
-        });
-    });
-
-    await Promise.all(enrollmentPromises);
+    console.log(`Enrollment completed: ${enrolledCount} enrolled, ${skippedCount} skipped, ${errors.length} errors`);
     
-    return { success: true, message: `Enrolled ${students.length} students in the subject` };
+    // If there were any errors, throw an error with details
+    if (errors.length > 0) {
+      throw new Error(`Enrollment completed with errors: ${errors.join('; ')}`);
+    }
+    
+    return { 
+      success: true, 
+      message: `Enrolled ${enrolledCount} students in the subject${skippedCount > 0 ? `, ${skippedCount} already enrolled` : ''}` 
+    };
   };
 
   const enrollStudentInSubject = async ({ studentId, subjectId }: { studentId: string; subjectId: string }) => {
@@ -163,6 +198,11 @@ export function useSubjectEnrollments() {
     mutationFn: enrollClassStudentsInSubject,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["subject-enrollments"] });
+      queryClient.invalidateQueries({ queryKey: ["student-enrollments"] });
+      queryClient.invalidateQueries({ queryKey: ["students"] });
+      queryClient.invalidateQueries({ queryKey: ["students", "by-subject"] });
+      queryClient.invalidateQueries({ queryKey: ["students", "by-class"] });
+      queryClient.invalidateQueries({ queryKey: ["students", "enrolled-in-class-subjects"] });
       toast.success("Students enrolled in subject successfully");
     },
     onError: (error: Error) => {

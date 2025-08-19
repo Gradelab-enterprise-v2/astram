@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { FileText, Users, BookOpen } from "lucide-react";
 import { useStudents } from "@/hooks/use-students";
 import { useSubjects } from "@/hooks/use-subjects";
+import { fetchStudentsEnrolledInClassSubjects } from "@/hooks/students/student-api";
 
 interface ClassQuickLinksProps {
   classId: string;
@@ -34,7 +35,7 @@ export function ClassQuickLinks({ classId }: ClassQuickLinksProps) {
         // Load students with error handling
         let studentsCount = 0;
         try {
-          const students = await fetchStudentsByClass(classId);
+          const students = await fetchStudentsEnrolledInClassSubjects(classId);
           if (isMounted) {
             studentsCount = students?.length || 0;
             setStudentCount(studentsCount);
@@ -71,7 +72,7 @@ export function ClassQuickLinks({ classId }: ClassQuickLinksProps) {
     return () => {
       isMounted = false;
     };
-  }, [classId, fetchStudentsByClass, getSubjectsByClassId]);
+  }, [classId, getSubjectsByClassId]);
   
   const handleNavigateToTests = () => {
     navigate(`/tests?class=${classId}`);

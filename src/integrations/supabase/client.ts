@@ -20,11 +20,15 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
           // Create a new AbortController for each attempt to avoid issues with reusing aborted signals
           const controller = new AbortController();
           
-          // Create a timeout that will abort the request after 60 seconds
+          // Create a timeout that will abort the request after 10 minutes (600 seconds) for Edge Functions
+          // and 60 seconds for regular API calls
+          const isEdgeFunction = url.toString().includes('/functions/v1/');
+          const timeoutMs = isEdgeFunction ? 600000 : 60000; // 10 minutes for Edge Functions, 1 minute for API
+          
           const timeoutId = setTimeout(() => {
-            console.warn(`Request timeout reached after 60 seconds, aborting attempt ${attempt}`);
-            controller.abort(new Error("Request timeout after 60 seconds"));
-          }, 60000);
+            console.warn(`Request timeout reached after ${timeoutMs/1000} seconds, aborting attempt ${attempt}`);
+            controller.abort(new Error(`Request timeout after ${timeoutMs/1000} seconds`));
+          }, timeoutMs);
           
           // Merge the abort signal with any existing options
           const fetchOptions = {

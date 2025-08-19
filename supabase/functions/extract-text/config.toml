@@ -2,3 +2,4 @@
 project_id = "mfnhgldghrnjrwlhtvor"
 name = "extract-text"
 verify_jwt = false
+timeout = 300

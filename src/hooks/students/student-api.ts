@@ -34,12 +34,29 @@ export const fetchAllStudents = async (): Promise<Student[]> => {
 };
 
 export const fetchStudentsByClass = async (classId: string): Promise<Student[]> => {
+  console.log(`fetchStudentsByClass called with classId: ${classId}`);
+  
   if (!classId) {
     console.warn("No class ID provided to fetchStudentsByClass");
     return [];
   }
 
   try {
+    // Get the current authenticated user
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError) {
+      console.error("Error getting authenticated user:", userError);
+      throw new Error(`Authentication error: ${userError.message}`);
+    }
+    
+    if (!user) {
+      console.warn("No authenticated user found");
+      return [];
+    }
+
+    console.log(`Fetching students for class ${classId} and user ${user.id}`);
+
     const { data, error } = await supabase
       .from("students")
       .select(`
@@ -47,6 +64,7 @@ export const fetchStudentsByClass = async (classId: string): Promise<Student[]> 
         class:classes(*)
       `)
       .eq("class_id", classId)
+      .eq("user_id", user.id)
       .order("name");
 
     if (error) {
@@ -54,9 +72,84 @@ export const fetchStudentsByClass = async (classId: string): Promise<Student[]> 
       throw new Error(`Error fetching students for class: ${error.message}`);
     }
 
+    console.log(`Found ${data?.length || 0} students for class ${classId}`);
     return data || [];
   } catch (error) {
     console.error("Error in fetchStudentsByClass:", error);
+    throw error;
+  }
+};
+
+export const fetchStudentsEnrolledInClassSubjects = async (classId: string): Promise<Student[]> => {
+  console.log(`fetchStudentsEnrolledInClassSubjects called with classId: ${classId}`);
+  
+  if (!classId) {
+    console.warn("No class ID provided to fetchStudentsEnrolledInClassSubjects");
+    return [];
+  }
+
+  try {
+    // Get the current authenticated user
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError) {
+      console.error("Error getting authenticated user:", userError);
+      throw new Error(`Authentication error: ${userError.message}`);
+    }
+    
+    if (!user) {
+      console.warn("No authenticated user found");
+      return [];
+    }
+
+    console.log(`Fetching students enrolled in subjects for class ${classId} and user ${user.id}`);
+
+    // Get all subjects that belong to this class (direct relationship)
+    const { data: classSubjects, error: classSubjectsError } = await supabase
+      .from("subjects")
+      .select("id")
+      .eq("class", classId)
+      .eq("user_id", user.id);
+
+    if (classSubjectsError) {
+      console.error(`Error fetching subjects for class ${classId}:`, classSubjectsError);
+      throw new Error(`Error fetching subjects for class: ${classSubjectsError.message}`);
+    }
+
+    if (!classSubjects || classSubjects.length === 0) {
+      console.log(`No subjects found for class ${classId}`);
+      return [];
+    }
+
+    const subjectIds = classSubjects.map(cs => cs.id);
+    console.log(`Found ${subjectIds.length} subjects for class ${classId}:`, subjectIds);
+
+    // Get all students enrolled in these subjects, ensuring they belong to the current user
+    const { data: enrollments, error: enrollmentsError } = await supabase
+      .from("subject_enrollments")
+      .select("student:students(*)")
+      .in("subject_id", subjectIds)
+      .eq("user_id", user.id);
+
+    if (enrollmentsError) {
+      console.error(`Error fetching enrollments for subjects in class ${classId}:`, enrollmentsError);
+      throw new Error(`Error fetching enrollments: ${enrollmentsError.message}`);
+    }
+
+    // Extract unique students from enrollments
+    const studentMap = new Map();
+    (enrollments || []).forEach((enrollment: any) => {
+      if (enrollment.student) {
+        studentMap.set(enrollment.student.id, enrollment.student);
+      }
+    });
+
+    const students = Array.from(studentMap.values());
+    console.log(`Found ${students.length} unique students enrolled in subjects for class ${classId}`);
+    
+    return students;
+  } catch (error) {
+    console.error("Error in fetchStudentsEnrolledInClassSubjects:", error);
     throw error;
   }
 };
