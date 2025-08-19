@@ -1,13 +1,8 @@
 
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { AzureOpenAI } from 'https://esm.sh/openai@latest';
 
 const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
-const azureOpenAIKey = Deno.env.get('AZURE_OPENAI_API_KEY');
-const azureOpenAIEndpoint = Deno.env.get('AZURE_OPENAI_ENDPOINT');
-const azureOpenAIDeployment = Deno.env.get('AZURE_OPENAI_DEPLOYMENT');
-const azureOpenAIApiVersion = Deno.env.get('AZURE_OPENAI_API_VERSION') || '2024-08-01-preview';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -24,22 +19,13 @@ serve(async (req) => {
     // Get request data
     const { questionPaper, answerKey, studentAnswerSheet, studentInfo, preserveRawExtractedText } = await req.json();
 
-    // Check if we have Azure OpenAI configured, otherwise fall back to OpenAI
-    const useAzureOpenAI = azureOpenAIKey && azureOpenAIEndpoint && azureOpenAIDeployment;
-    
-    if (!useAzureOpenAI && !openAIApiKey) {
-      throw new Error('Neither Azure OpenAI nor OpenAI credentials are configured. Please set either Azure OpenAI credentials or OPENAI_API_KEY.');
+    // Check if we have OpenAI configured
+    if (!openAIApiKey) {
+      throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY.');
     }
 
     console.log("Processing evaluation for student:", studentInfo.name);
-    console.log("Using Azure OpenAI:", useAzureOpenAI);
-    if (useAzureOpenAI) {
-      console.log('Azure OpenAI Configuration:');
-      console.log('- AZURE_OPENAI_ENDPOINT:', azureOpenAIEndpoint);
-      console.log('- AZURE_OPENAI_DEPLOYMENT:', azureOpenAIDeployment);
-      console.log('- AZURE_OPENAI_API_VERSION:', azureOpenAIApiVersion);
-      console.log('- AZURE_OPENAI_API_KEY:', azureOpenAIKey ? '[SET]' : '[NOT SET]');
-    }
+    console.log("Using OpenAI for evaluation");
     console.log("Input lengths - Question paper:", questionPaper?.length || 0, 
                 "Answer key:", answerKey?.length || 0, 
                 "Student sheet:", studentAnswerSheet?.length || 0);
@@ -180,84 +166,43 @@ serve(async (req) => {
     try {
       let response: any;
       
-      if (useAzureOpenAI) {
-        // Use Azure OpenAI SDK (same as generate-questions function)
-        console.log(`Using Azure OpenAI SDK for evaluation`);
-        
-        const options = {
-          endpoint: azureOpenAIEndpoint,
-          apiKey: azureOpenAIKey,
-          deployment: azureOpenAIDeployment,
-          apiVersion: azureOpenAIApiVersion
-        };
-        const client = new AzureOpenAI(options);
-        
-        try {
-          response = await client.chat.completions.create({
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.1, // Lower temperature for more consistent JSON formatting
-            response_format: { type: "json_object" }, // Explicitly request JSON format
-            max_tokens: 8000,
-          });
-        } catch (azureError) {
-          console.error("Azure OpenAI SDK error:", azureError);
-          throw azureError;
-        }
-      } else {
-        // Use OpenAI API directly
-        console.log("Using OpenAI API for evaluation");
-        
-        const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${openAIApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            temperature: 0.1,
-            response_format: { type: "json_object" },
-            max_tokens: 8000,
-          }),
-          signal: controller.signal
-        });
-        
-        if (!openAIResponse.ok) {
-          const error = await openAIResponse.json();
-          console.error("OpenAI API error:", error);
-          throw new Error(`OpenAI API error: ${error.error?.message || 'Unknown error'}`);
-        }
-        
-        response = await openAIResponse.json();
+      const openAIResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openAIApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt }
+          ],
+          temperature: 0.1,
+          response_format: { type: "json_object" },
+          max_tokens: 8000,
+        }),
+        signal: controller.signal
+      });
+      
+      if (!openAIResponse.ok) {
+        const error = await openAIResponse.json();
+        console.error("OpenAI API error:", error);
+        throw new Error(`OpenAI API error: ${error.error?.message || 'Unknown error'}`);
       }
+      
+      response = await openAIResponse.json();
       
       clearTimeout(timeoutId);
 
       // Handle response based on the source (Azure SDK vs direct fetch)
       let evaluationResultContent: string;
       
-      if (useAzureOpenAI) {
-        // Azure OpenAI SDK returns the response directly
-        if (!response || !response.choices || !response.choices[0] || !response.choices[0].message || !response.choices[0].message.content) {
-          console.error("Invalid response format from Azure OpenAI:", response);
-          throw new Error("Invalid response format from Azure OpenAI");
-        }
-        evaluationResultContent = response.choices[0].message.content;
-      } else {
-        // Direct OpenAI fetch returns JSON that needs parsing
-        if (!response || !response.choices || !response.choices[0] || !response.choices[0].message || !response.choices[0].message.content) {
-          console.error("Invalid response format from OpenAI:", response);
-          throw new Error("Invalid response format from OpenAI");
-        }
-        evaluationResultContent = response.choices[0].message.content;
+      if (!response || !response.choices || !response.choices[0] || !response.choices[0].message || !response.choices[0].message.content) {
+        console.error("Invalid response format from OpenAI:", response);
+        throw new Error("Invalid response format from OpenAI");
       }
+      evaluationResultContent = response.choices[0].message.content;
 
       try {
         console.log("Received evaluation result from OpenAI");

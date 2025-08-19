@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { TestPaper } from "@/types/test-papers";
+import { uploadImageToLocal } from "@/lib/storage-config";
 
 export const fetchPapersByTest = async (testId: string): Promise<TestPaper[]> => {
   if (!testId) return [];
@@ -46,21 +47,16 @@ export const uploadPaper = async (formData: any): Promise<TestPaper> => {
   const filePath = `test_papers/${userData.user.id}/${fileName}`;
 
   // Upload file to storage
-  const { data: fileData, error: fileError } = await supabase.storage
-    .from("papers")
-    .upload(filePath, file);
+  const { data: fileData, publicUrl: fileUrl, error: fileError } = await uploadImageToLocal(
+    "papers",
+    filePath,
+    file
+  );
 
   if (fileError) {
     console.error("Error uploading file:", fileError);
     throw new Error(fileError.message);
   }
-
-  // Get public URL
-  const { data: publicURLData } = await supabase.storage
-    .from("papers")
-    .getPublicUrl(filePath);
-
-  const fileUrl = publicURLData.publicUrl;
 
   // Create paper record in database
   const paperData = {

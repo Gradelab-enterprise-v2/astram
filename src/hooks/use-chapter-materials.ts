@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { convertPdfToImages, validateFile, dataUrlToBlob } from "@/utils/pdf-processor";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import { uploadImageToLocal, STORAGE_BUCKETS } from "@/lib/storage-config";
 
 export interface ChapterMaterial {
   id: string;
@@ -41,19 +42,17 @@ export function useChapterMaterials() {
       }
 
       const fileName = `${user.id}/${Math.random().toString(36).substring(2, 15)}_${Date.now()}.${file.name.split('.').pop()}`;
-      const { error: uploadError, data: uploadData } = await supabase.storage
-        .from("chapter_materials")
-        .upload(fileName, file);
+      const { data: uploadData, publicUrl, error: uploadError } = await uploadImageToLocal(
+        STORAGE_BUCKETS.CHAPTER_MATERIALS,
+        fileName,
+        file
+      );
       
       if (uploadError) {
         console.error("Upload error:", uploadError);
         toast.error(`Error uploading file: ${uploadError.message}`);
         return null;
       }
-
-      const { data: { publicUrl } } = supabase.storage
-        .from("chapter_materials")
-        .getPublicUrl(fileName);
 
       const { data, error } = await supabase
         .from("analysis_history")

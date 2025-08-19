@@ -96,61 +96,25 @@ export function FilesBrowser() {
     }
     
     try {
-      toast.info(`Starting text extraction for ${paper.title}...`);
+      toast.info(`Starting optimized text extraction for ${paper.title}...`);
       
       setExtractingPaperId(paper.id);
       setExtractionProgress(10);
-      setExtractionPhase("Converting PDF to images");
+      setExtractionPhase("Starting extraction...");
       
-      const conversionTimer = setInterval(() => {
-        setExtractionProgress(prev => {
-          const newProgress = prev + 5;
-          if (newProgress >= 40) {
-            clearInterval(conversionTimer);
-            setExtractionPhase("Creating ZIP archive");
-            return 40;
-          }
-          return newProgress;
-        });
-      }, 300);
+      // Use the optimized extract text function
+      await extractText(paper.id);
       
-      setTimeout(() => {
-        setExtractionProgress(50);
-        setExtractionPhase("Processing OCR...");
-        
-        const ocrTimer = setInterval(() => {
-          setExtractionProgress(prev => {
-            const newProgress = prev + 3;
-            if (newProgress >= 90) {
-              clearInterval(ocrTimer);
-              return 90;
-            }
-            return newProgress;
-          });
-        }, 400);
-        
-        extractText(paper.id, {
-          onSuccess: () => {
-            setExtractionProgress(100);
-            setExtractionPhase("Extraction complete");
-            
-            // Reset local state immediately after successful extraction
-            setExtractingPaperId(null);
-            setExtractionProgress(0);
-            setExtractionPhase("");
-            
-            toast.success(`Successfully extracted text from ${paper.title}`);
-            refetch();
-          },
-          onError: (error: Error) => {
-            console.error("Text extraction error:", error);
-            setExtractingPaperId(null);
-            setExtractionProgress(0);
-            setExtractionPhase("");
-            toast.error(`Failed to extract text: ${error.message || "Unknown error"}`);
-          }
-        });
-      }, 1500);
+      setExtractionProgress(100);
+      setExtractionPhase("Extraction complete");
+      
+      // Reset local state
+      setExtractingPaperId(null);
+      setExtractionProgress(0);
+      setExtractionPhase("");
+      
+      toast.success(`Successfully extracted text from ${paper.title}`);
+      refetch();
       
     } catch (error) {
       console.error("Text extraction error:", error);
