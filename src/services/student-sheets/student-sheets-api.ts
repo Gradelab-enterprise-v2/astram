@@ -186,8 +186,8 @@ export const extractTextFromSheet = async (sheet: StudentAnswerSheet): Promise<S
       throw new Error("Failed to convert PDF to images");
     }
     
-    // 3. Process images in larger batches for better performance - SAME AS RESOURCES TAB
-    const BATCH_SIZE = 25; // Same as resources tab for consistency
+    // 3. Process images in batches of 10 for optimal Azure OpenAI processing
+    const BATCH_SIZE = 10; // Optimized for Azure OpenAI batch processing
     const batches = [];
     
     for (let i = 0; i < images.length; i += BATCH_SIZE) {
@@ -199,8 +199,8 @@ export const extractTextFromSheet = async (sheet: StudentAnswerSheet): Promise<S
     // 4. Process batches with concurrent requests for better performance - SAME AS RESOURCES TAB
     let allExtractedText: string[] = [];
     
-    // Process batches in parallel with concurrency limit - SAME AS RESOURCES TAB
-    const CONCURRENT_BATCHES = 4; // Same as resources tab for consistency
+    // Process batches in parallel with concurrency limit - optimized for Azure OpenAI
+    const CONCURRENT_BATCHES = 3; // Optimized for Azure OpenAI concurrent processing
     
     for (let i = 0; i < batches.length; i += CONCURRENT_BATCHES) {
       const currentBatchGroup = batches.slice(i, i + CONCURRENT_BATCHES);

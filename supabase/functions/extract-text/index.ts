@@ -1,24 +1,34 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.7.1';
 import { AzureOpenAI } from 'https://esm.sh/openai@latest';
-import { corsHeaders } from '../_shared/cors.ts';
-import { getEdgeFunctionConfig } from '../_shared/dual-config.ts';
+
+// CORS headers
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+};
 
 // Configuration
-const OPENAI_TIMEOUT = 300000; // 5 minutes
 const AZURE_TIMEOUT = 120000; // 2 minutes
 const IMAGE_DOWNLOAD_TIMEOUT = 60000; // 1 minute for image downloads
 const MAX_RETRIES = 3;
 const MAX_PAGES_PER_REQUEST = 20;
 
-// API Keys and Configuration
-const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
+// Azure OpenAI Configuration
 const AZURE_OPENAI_API_KEY = Deno.env.get('AZURE_OPENAI_API_KEY');
 const AZURE_OPENAI_ENDPOINT = Deno.env.get('AZURE_OPENAI_ENDPOINT');
 const AZURE_OPENAI_DEPLOYMENT = Deno.env.get('AZURE_OPENAI_DEPLOYMENT');
-const AZURE_OPENAI_API_VERSION = Deno.env.get('AZURE_OPENAI_API_VERSION') || '2024-04-01-preview';
+const AZURE_OPENAI_API_VERSION = Deno.env.get('AZURE_OPENAI_API_VERSION') || '2024-12-01-preview';
 
-// Get Supabase configuration using shared config
-const { supabase, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = getEdgeFunctionConfig();
+// Supabase Configuration
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL');
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+// Batch processing configuration
+const BATCH_SIZE = 10; // Process 10 images per batch
+const MAX_CONCURRENT_BATCHES = 3; // Run up to 3 batches concurrently
+
+// Create a Supabase client with the service role key for admin actions
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 Deno.serve(async (req) => {
   // Handle CORS preflight requests
@@ -64,29 +74,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Determine which API to use based on document type
-    // Student sheets now use OpenAI, only chapter materials use Azure
-    const useAzure = documentType === 'chapter-material' && base64Images;
-    
-    if (useAzure) {
-      if (!AZURE_OPENAI_API_KEY || !AZURE_OPENAI_ENDPOINT || !AZURE_OPENAI_DEPLOYMENT) {
-        throw new Error('Azure OpenAI configuration missing for chapter material extraction');
-      }
-      return await extractWithAzure(requestData);
-    } else {
-      if (!OPENAI_API_KEY) {
-        throw new Error('OpenAI API key not configured');
-      }
-      // For student sheets with base64Images, convert them to data URLs for OpenAI
-      if (documentType === 'student-sheet' && base64Images && !imageUrls) {
-        const dataUrls = base64Images.map(base64 => `data:image/png;base64,${base64}`);
-        return await extractWithOpenAI({
-          ...requestData,
-          imageUrls: dataUrls
-        });
-      }
-      return await extractWithOpenAI(requestData);
+    // Check Azure OpenAI configuration
+    if (!AZURE_OPENAI_API_KEY || !AZURE_OPENAI_ENDPOINT || !AZURE_OPENAI_DEPLOYMENT) {
+      throw new Error('Azure OpenAI configuration missing');
     }
+
+    // Use Azure OpenAI for all document types now
+    if (base64Images) {
+      return await extractWithAzure(requestData);
+    } else if (imageUrls) {
+      // Convert image URLs to base64 for Azure processing
+      const convertedRequestData = {
+        ...requestData,
+        base64Images: await convertImageUrlsToBase64(imageUrls)
+      };
+      return await extractWithAzure(convertedRequestData);
+    } else {
+      throw new Error('No images provided');
+    }
+
   } catch (error) {
     console.error('Error in extract-text function:', error);
     return new Response(JSON.stringify({
@@ -102,402 +108,44 @@ Deno.serve(async (req) => {
   }
 });
 
-async function extractWithOpenAI(requestData) {
-  const { imageUrls, documentType = 'question', prompt, pageIndex = 0, sheetId } = requestData;
-
-  if (!imageUrls || imageUrls.length === 0) {
-    throw new Error('No image URLs provided');
-  }
-
-  // Update status for student sheets
-  if (documentType === 'student-sheet' && sheetId) {
-    const { error: updateError } = await supabase
-      .from('student_answer_sheets')
-      .update({
-        status: 'processing',
-        has_extracted_text: false,
-        extracted_text: 'Processing...'
-      })
-      .eq('id', sheetId);
-
-    if (updateError) {
-      console.error('Error updating status:', updateError);
-    }
-  }
-
-  // Validate image URLs are accessible before processing
-  const validatedUrls = await validateImageUrls(imageUrls);
-  if (validatedUrls.length === 0) {
-    throw new Error('None of the provided image URLs are accessible. Please check the image links and try again.');
-  }
-
-  const systemPrompt = `You are an OCR tool specialized in extracting content from educational documents. Your task is CRITICAL for student evaluation.
-
-IMPORTANT INSTRUCTIONS:
-1. Extract ALL text content visible in the document with perfect accuracy
-2. Do not summarize or interpret - extract the exact text as it appears
-3. Focus on maintaining the exact structure, formatting, and mathematical notation
-4. If you cannot read any part of the text, mark it as [UNREADABLE] instead of apologizing
-5. ${documentType === 'answer' ? 'For answer keys, pay special attention to:\n   - Question numbers and their corresponding answers\n   - Mathematical equations and formulas\n   - Step-by-step solutions\n   - Marking schemes or point distributions' : documentType === 'student-sheet' ? 'For student answer sheets, pay special attention to:\n   - Student answers and responses\n   - Handwritten text (if present)\n   - Mathematical equations and formulas\n   - Diagrams and visual elements\n   - Question numbers and structure' : 'For question papers, focus on:\n   - Questions and their structure\n   - Mathematical equations and formulas\n   - Diagrams and visual elements\n   - Instructions and options'}
-6. NEVER respond with "I'm sorry" or "I cannot" - always extract whatever text you can see
-7. If the image quality is poor, extract what you can and mark unclear parts as [UNREADABLE]
-
-SPECIAL FORMATTING REQUIREMENTS:
-
-1. MATHEMATICAL EQUATIONS:
-   - Convert ALL mathematical expressions to LaTeX format using $$ delimiters
-   - Examples:
-     * x^2 + y^2 = z^2 becomes $$x^2 + y^2 = z^2$$
-     * ∫(x^2)dx becomes $$\\int x^2 dx$$
-     * √(a^2 + b^2) becomes $$\\sqrt{a^2 + b^2}$$
-     * (a + b)^2 = a^2 + 2ab + b^2 becomes $$(a + b)^2 = a^2 + 2ab + b^2$$
-   - Use proper LaTeX syntax: \\frac{}{}, \\sqrt{}, \\int, \\sum, \\pi, \\theta, etc.
-
-2. DIAGRAMS AND VISUAL STRUCTURES:
-   - Convert ALL diagrams, flowcharts, schematics, and visual structures to Mermaid format
-   - Use \`\`\`mermaid code blocks
-   - Common diagram types and their Mermaid syntax:
-
-   FLOWCHARTS:
-   \`\`\`mermaid
-   graph TD
-       A[Start] --> B{Decision?}
-       B -->|Yes| C[Process]
-       B -->|No| D[End]
-       C --> D
-   \`\`\`
-
-   SEQUENCE DIAGRAMS:
-   \`\`\`mermaid
-   sequenceDiagram
-       participant A as User
-       participant B as System
-       A->>B: Request
-       B->>A: Response
-   \`\`\`
-
-   CLASS DIAGRAMS:
-   \`\`\`mermaid
-   classDiagram
-       class Animal {
-           +name: string
-           +makeSound()
-       }
-       class Dog {
-           +bark()
-       }
-       Animal <|-- Dog
-   \`\`\`
-
-   ENTITY RELATIONSHIP:
-   \`\`\`mermaid
-   erDiagram
-       CUSTOMER ||--o{ ORDER : places
-       ORDER ||--|{ ORDER_ITEM : contains
-   \`\`\`
-
-   STATE DIAGRAMS:
-   \`\`\`mermaid
-   stateDiagram-v2
-       [*] --> Idle
-       Idle --> Processing : start
-       Processing --> Idle : complete
-   \`\`\`
-
-3. CHEMICAL FORMULAS:
-   - Use LaTeX format with proper subscripts and superscripts
-   - Examples:
-     * H2O becomes H_2O
-     * CO2 becomes CO_2
-     * H2SO4 becomes H_2SO_4
-     * Ca(OH)2 becomes Ca(OH)_2
-
-4. TABLES:
-   - Preserve table structure with proper formatting
-   - Use markdown table syntax when possible
-
-5. IMPORTANT DIAGRAM RULES:
-   - ALWAYS use proper Mermaid syntax
-   - Use descriptive node labels in square brackets [Label]
-   - Use proper arrow syntax: -->, -.->, ==>, etc.
-   - For decision nodes, use diamond shape with {Decision?}
-   - For processes, use rectangle with [Process Name]
-   - For start/end, use rounded rectangles with [Start] or [End]
-   - Use proper indentation and spacing
-   - Include all visible elements from the diagram
-   - If you see a diagram but can't determine the exact type, use 'graph TD' as default
-   - NEVER use incorrect Mermaid syntax like "graph TD A --> B" without proper node definitions
-   - CRITICAL: Each node must be defined on its own line with proper syntax
-   - CRITICAL: Node labels must be complete and properly closed with ]
-   - CRITICAL: Never truncate node labels or leave them incomplete
-   - CRITICAL: Each arrow must connect two properly defined nodes
-   - CRITICAL: If you cannot clearly see all elements of a diagram, describe it in text instead of creating invalid Mermaid`;
-
-  // Process images in batches for student sheets
-  if (documentType === 'student-sheet') {
-    return await processStudentSheetWithOpenAI(validatedUrls, systemPrompt, prompt, sheetId, requestData);
-  }
-
-  // Original logic for other document types
-  let retries = MAX_RETRIES;
-  let lastError = null;
-
-  while (retries > 0) {
+/**
+ * Convert image URLs to base64 for Azure processing
+ */
+async function convertImageUrlsToBase64(imageUrls: string[]): Promise<string[]> {
+  const base64Images: string[] = [];
+  
+  for (const url of imageUrls) {
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), OPENAI_TIMEOUT);
-
-      const userContent = [
-        {
-          type: 'text',
-          text: `${prompt || (documentType === 'answer' ? 'CRITICAL OCR TASK: This is an answer key image. Extract ALL visible text exactly as it appears, maintaining structure and formatting. Pay special attention to question numbers, answers, and any marking schemes. If any text is unclear, mark it as [UNREADABLE]. DIAGRAM EXTRACTION: Look carefully for ANY visual diagrams, flowcharts, schematics, or structured visual elements. Convert ALL diagrams to proper Mermaid format using \`\`\`mermaid code blocks. Use correct Mermaid syntax with proper node definitions: [Node Name] not just Node Name. For decision points, use {Decision?} format. For processes, use [Process Name] format. For start/end points, use [Start] or [End] format. Use proper arrow syntax: -->, -.->, ==>, etc. Include ALL visible elements and connections from the diagram. If you see a diagram but are unsure of the type, use "graph TD" as default. MATHEMATICAL EQUATIONS: Convert ALL mathematical expressions to LaTeX format using $$ delimiters. Use proper LaTeX syntax: \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, \\\\pi, \\\\theta, etc.' : 'Extract all text from these images while preserving formatting, line breaks, and structure. Include any mathematical equations, symbols, or special characters exactly as they appear. If any text is unclear or unreadable, mark it as [UNREADABLE]. DIAGRAM EXTRACTION: Look carefully for ANY visual diagrams, flowcharts, schematics, or structured visual elements. Convert ALL diagrams to proper Mermaid format using \`\`\`mermaid code blocks. Use correct Mermaid syntax with proper node definitions: [Node Name] not just Node Name. For decision points, use {Decision?} format. For processes, use [Process Name] format. For start/end points, use [Start] or [End] format. Use proper arrow syntax: -->, -.->, ==>, etc. Include ALL visible elements and connections from the diagram. If you see a diagram but are unsure of the type, use "graph TD" as default. MATHEMATICAL EQUATIONS: Convert ALL mathematical expressions to LaTeX format using $$ delimiters. Use proper LaTeX syntax: \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, \\\\pi, \\\\theta, etc.')}\n\nProcessing pages ${pageIndex + 1} to ${pageIndex + imageUrls.length} of the document.`
-        }
-      ];
-
-      // Add all validated images to the request
-      for (const imageUrl of validatedUrls) {
-        userContent.push({
-          type: 'image_url',
-          image_url: {
-            url: imageUrl,
-            detail: retries === MAX_RETRIES ? 'high' : 'low'
-          }
-        });
-      }
-
-      const messages = [
-        {
-          role: 'system',
-          content: systemPrompt
-        },
-        {
-          role: 'user',
-          content: userContent
-        }
-      ];
-
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: messages,
-          response_format: { type: "text" }
-        }),
-        signal: controller.signal
-      });
-
-      clearTimeout(timeoutId);
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(`OpenAI API error: ${error.error?.message || 'Unknown error'}`);
-      }
-
-      const data = await response.json();
-      const extractedText = data.choices[0].message.content;
-
-      // Check for generic apology messages
-      if (extractedText.toLowerCase().includes("i'm sorry") || 
-          extractedText.toLowerCase().includes("i cannot") || 
-          extractedText.toLowerCase().includes("i can't")) {
-        if (documentType === 'answer' && retries > 1) {
-          throw new Error('The model returned an unhelpful response. Retrying with stronger instructions.');
-        }
-        throw new Error('The model returned an unhelpful response. Please try again.');
-      }
-
-      // For answer keys, validate the extracted text
-      if (documentType === 'answer') {
-        const hasQuestionNumbers = /\b\d+\.|\bQ\.?\s*\d+/i.test(extractedText);
-        const hasAnswers = /answer|solution|mark|point/i.test(extractedText);
-        
-        if (!hasQuestionNumbers && !hasAnswers && retries > 1) {
-          throw new Error('Extracted text does not appear to contain answer key content. Retrying with stronger instructions.');
-        }
-      }
-
-      return new Response(JSON.stringify({
-        success: true,
-        extractedText,
-        pageCount: imageUrls.length
-      }), {
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json'
-        }
-      });
-
-    } catch (error) {
-      lastError = error;
-      retries--;
-      
-      if (error.name === 'AbortError') {
-        console.error(`Request timed out (attempt ${MAX_RETRIES - retries}/${MAX_RETRIES})`);
-        if (imageUrls.length > 1) {
-          console.log(`Retrying with fewer pages (${Math.ceil(imageUrls.length / 2)}) due to timeout`);
-          const halfUrls = imageUrls.slice(0, Math.ceil(imageUrls.length / 2));
-          return await extractWithOpenAI({
-            ...requestData,
-            imageUrls: halfUrls
-          });
+      if (url.startsWith('data:image/')) {
+        // Already base64, extract the data
+        const base64Match = url.match(/^data:image\/[a-zA-Z]+;base64,(.+)$/);
+        if (base64Match && base64Match[1]) {
+          base64Images.push(base64Match[1]);
         }
       } else {
-        console.error(`Error in attempt ${MAX_RETRIES - retries}/${MAX_RETRIES}:`, error);
-      }
-
-      if (retries > 0) {
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, MAX_RETRIES - retries) * 1000));
-      }
-    }
-  }
-
-  throw lastError || new Error('Failed to process images after multiple attempts');
-}
-
-// New function to handle student sheet processing with OpenAI
-async function processStudentSheetWithOpenAI(validatedUrls, systemPrompt, prompt, sheetId, requestData) {
-  const BATCH_SIZE = 10; // Process 10 pages at a time
-  const extractedPageTexts = [];
-
-  for (let i = 0; i < validatedUrls.length; i += BATCH_SIZE) {
-    const batch = validatedUrls.slice(i, i + BATCH_SIZE);
-    console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(validatedUrls.length / BATCH_SIZE)} (pages ${i + 1} to ${Math.min(i + BATCH_SIZE, validatedUrls.length)})`);
-
-    const batchPromises = batch.map(async (imageUrl, batchIndex) => {
-      const pageIndex = i + batchIndex;
-      try {
-        console.log(`Processing image ${pageIndex + 1} of ${validatedUrls.length}`);
-        
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), OPENAI_TIMEOUT);
-
-        const userContent = [
-          {
-            type: 'text',
-            text: `Extract all text from this student answer sheet image. Pay special attention to handwritten content, mathematical equations, and diagrams. Convert mathematical equations to LaTeX format using $$ delimiters, and convert diagrams to Mermaid format using \`\`\`mermaid code blocks.`
-          },
-          {
-            type: 'image_url',
-            image_url: {
-              url: imageUrl,
-              detail: 'high'
-            }
-          }
-        ];
-
-        const messages = [
-          {
-            role: 'system',
-            content: systemPrompt
-          },
-          {
-            role: 'user',
-            content: userContent
-          }
-        ];
-
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${OPENAI_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: messages,
-            response_format: { type: "text" }
-          }),
-          signal: controller.signal
-        });
-
-        clearTimeout(timeoutId);
-
+        // HTTP URL, download and convert
+        const response = await fetch(url);
         if (!response.ok) {
-          const error = await response.json();
-          throw new Error(`OpenAI API error: ${error.error?.message || 'Unknown error'}`);
+          throw new Error(`Failed to download image: ${response.status}`);
         }
-
-        const data = await response.json();
-        const extractedText = data.choices[0].message.content;
-
-        return `=== PAGE ${pageIndex + 1} ===\n\n${extractedText}`;
-      } catch (error) {
-        console.error(`Error extracting text from image ${pageIndex + 1}:`, error);
-        return `=== PAGE ${pageIndex + 1} ===\n\n[Error processing page ${pageIndex + 1}: ${error.message || 'Unknown error'}]`;
+        
+        const arrayBuffer = await response.arrayBuffer();
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+        base64Images.push(base64);
       }
-    });
-
-    const batchResults = await Promise.all(batchPromises);
-    extractedPageTexts.push(...batchResults);
-
-    // Update progress in database if sheetId is provided
-    if (sheetId) {
-      const progress = Math.min(((i + BATCH_SIZE) / validatedUrls.length) * 100, 100);
-      await supabase
-        .from('student_answer_sheets')
-        .update({
-          extracted_text: `Processing... ${Math.round(progress)}% complete (${Math.min(i + BATCH_SIZE, validatedUrls.length)} of ${validatedUrls.length} pages)`
-        })
-        .eq('id', sheetId);
-    }
-
-    // Small delay between batches to avoid rate limiting
-    if (i + BATCH_SIZE < validatedUrls.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (error) {
+      console.error(`Error converting image to base64: ${url}`, error);
+      throw new Error(`Failed to convert image to base64: ${error.message}`);
     }
   }
-
-  const completeExtractedText = extractedPageTexts.join("\n\n");
-  console.log('Text extraction completed');
-
-  // Validate that we got meaningful text
-  if (!completeExtractedText || completeExtractedText.trim().length === 0) {
-    throw new Error('No text was extracted from the images. Please try again.');
-  }
-
-  // Update the database if sheetId is provided
-  if (sheetId) {
-    const { error: saveError } = await supabase
-      .from('student_answer_sheets')
-      .update({
-        extracted_text: completeExtractedText,
-        has_extracted_text: true,
-        status: 'completed',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', sheetId);
-
-    if (saveError) {
-      console.error('Error saving extracted text:', saveError);
-      return new Response(JSON.stringify({
-        success: false,
-        error: 'Failed to save extracted text'
-      }), {
-        headers: {
-          ...corsHeaders,
-          'Content-Type': 'application/json'
-        },
-        status: 500
-      });
-    }
-  }
-
-  return new Response(JSON.stringify({
-    success: true,
-    extractedText: completeExtractedText
-  }), {
-    headers: {
-      ...corsHeaders,
-      'Content-Type': 'application/json'
-    }
-  });
+  
+  return base64Images;
 }
 
-async function extractWithAzure(requestData) {
+/**
+ * Extract text using Azure OpenAI with batch processing
+ */
+async function extractWithAzure(requestData: any) {
   const { base64Images, sheetId, documentType = 'chapter-material' } = requestData;
 
   if (!base64Images || base64Images.length === 0) {
@@ -506,7 +154,7 @@ async function extractWithAzure(requestData) {
 
   // Update status if sheetId is provided
   if (sheetId) {
-    const tableName = 'analysis_history'; // Only chapter materials use Azure now
+    const tableName = documentType === 'student-sheet' ? 'student_answer_sheets' : 'analysis_history';
     const { error: updateError } = await supabase
       .from(tableName)
       .update({
@@ -521,52 +169,11 @@ async function extractWithAzure(requestData) {
     }
   }
 
-  // Process images in batches to avoid overwhelming the API
-  const BATCH_SIZE = 10; // Process 10 pages at a time
-  const extractedPageTexts = [];
+  // Process images using batch processing with multiple concurrent batches
+  const extractedTexts = await processImagesInBatches(base64Images, documentType, sheetId);
   
-  for (let i = 0; i < base64Images.length; i += BATCH_SIZE) {
-    const batch = base64Images.slice(i, i + BATCH_SIZE);
-    console.log(`Processing batch ${Math.floor(i / BATCH_SIZE) + 1} of ${Math.ceil(base64Images.length / BATCH_SIZE)} (pages ${i + 1} to ${Math.min(i + BATCH_SIZE, base64Images.length)})`);
-    
-    const batchPromises = batch.map(async (base64Image, batchIndex) => {
-      const pageIndex = i + batchIndex;
-      try {
-        console.log(`Processing image ${pageIndex + 1} of ${base64Images.length}`);
-        if (!base64Image || typeof base64Image !== 'string') {
-          throw new Error(`Invalid base64Image parameter for page ${pageIndex + 1}`);
-        }
-        const extractedText = await extractTextFromImageWithAzure(base64Image, pageIndex, documentType);
-        return `=== PAGE ${pageIndex + 1} ===\n\n${extractedText}`;
-      } catch (error) {
-        console.error(`Error extracting text from image ${pageIndex + 1}:`, error);
-        return `=== PAGE ${pageIndex + 1} ===\n\n[Error processing page ${pageIndex + 1}: ${error.message || 'Unknown error'}]`;
-      }
-    });
-    
-    const batchResults = await Promise.all(batchPromises);
-    extractedPageTexts.push(...batchResults);
-    
-    // Update progress in database if sheetId is provided
-    if (sheetId) {
-      const progress = Math.min(((i + BATCH_SIZE) / base64Images.length) * 100, 100);
-      const tableName = 'analysis_history';
-      await supabase
-        .from(tableName)
-        .update({
-          extracted_text: `Processing... ${Math.round(progress)}% complete (${Math.min(i + BATCH_SIZE, base64Images.length)} of ${base64Images.length} pages)`
-        })
-        .eq('id', sheetId);
-    }
-    
-    // Small delay between batches to avoid rate limiting
-    if (i + BATCH_SIZE < base64Images.length) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-
-  const completeExtractedText = extractedPageTexts.join("\n\n");
-  console.log('Text extraction completed');
+  const completeExtractedText = extractedTexts.join("\n\n");
+  console.log('Batch text extraction completed');
 
   // Validate that we got meaningful text
   if (!completeExtractedText || completeExtractedText.trim().length === 0) {
@@ -575,7 +182,7 @@ async function extractWithAzure(requestData) {
 
   // Update the database if sheetId is provided
   if (sheetId) {
-    const tableName = 'analysis_history';
+    const tableName = documentType === 'student-sheet' ? 'student_answer_sheets' : 'analysis_history';
     const { error: saveError } = await supabase
       .from(tableName)
       .update({
@@ -598,8 +205,8 @@ async function extractWithAzure(requestData) {
         },
         status: 500
       });
-      }
     }
+  }
 
   return new Response(JSON.stringify({
     success: true,
@@ -612,9 +219,86 @@ async function extractWithAzure(requestData) {
   });
 }
 
-async function extractTextFromImageWithAzure(base64Image, pageNumber, documentType) {
+/**
+ * Process images in batches with multiple concurrent batches
+ */
+async function processImagesInBatches(base64Images: string[], documentType: string, sheetId?: string): Promise<string[]> {
+  const batches = createBatches(base64Images, BATCH_SIZE);
+  console.log(`Created ${batches.length} batches of ${BATCH_SIZE} images each for ${documentType}`);
+
+  const results: string[] = [];
+  
+  // Process batches with controlled concurrency
+  for (let i = 0; i < batches.length; i += MAX_CONCURRENT_BATCHES) {
+    const currentBatches = batches.slice(i, i + MAX_CONCURRENT_BATCHES);
+    console.log(`Processing batches ${i + 1}-${Math.min(i + MAX_CONCURRENT_BATCHES, batches.length)} concurrently`);
+    
+    const batchPromises = currentBatches.map(async (batch, batchIndex) => {
+      const batchNumber = i + batchIndex + 1;
+      console.log(`Starting batch ${batchNumber} with ${batch.length} images`);
+      return await processBatch(batch, batchNumber, documentType, sheetId);
+    });
+
+    const batchResults = await Promise.all(batchPromises);
+    results.push(...batchResults.flat());
+    
+    // Update progress in database if sheetId is provided
+    if (sheetId) {
+      const progress = Math.min(((i + MAX_CONCURRENT_BATCHES) * BATCH_SIZE / base64Images.length) * 100, 100);
+      const tableName = documentType === 'student-sheet' ? 'student_answer_sheets' : 'analysis_history';
+      await supabase
+        .from(tableName)
+        .update({
+          extracted_text: `Processing... ${Math.round(progress)}% complete (${Math.min((i + MAX_CONCURRENT_BATCHES) * BATCH_SIZE, base64Images.length)} of ${base64Images.length} pages)`
+        })
+        .eq('id', sheetId);
+    }
+    
+    // Small delay between batch groups to avoid overwhelming the API
+    if (i + MAX_CONCURRENT_BATCHES < batches.length) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+  }
+
+  return results;
+}
+
+/**
+ * Create batches from an array
+ */
+function createBatches<T>(array: T[], batchSize: number): T[][] {
+  const batches: T[][] = [];
+  for (let i = 0; i < array.length; i += batchSize) {
+    batches.push(array.slice(i, i + batchSize));
+  }
+  return batches;
+}
+
+/**
+ * Process a single batch of images
+ */
+async function processBatch(images: string[], batchNumber: number, documentType: string, sheetId?: string): Promise<string[]> {
+  const batchPromises = images.map(async (base64Image, index) => {
+    const globalIndex = (batchNumber - 1) * BATCH_SIZE + index;
+    try {
+      console.log(`Processing image ${globalIndex + 1} in batch ${batchNumber}`);
+      const extractedText = await extractTextFromImageWithAzure(base64Image, globalIndex, documentType);
+      return `=== PAGE ${globalIndex + 1} ===\n\n${extractedText}`;
+    } catch (error) {
+      console.error(`Error processing image ${globalIndex + 1} in batch ${batchNumber}:`, error);
+      return `=== PAGE ${globalIndex + 1} ===\n\n[Error processing page ${globalIndex + 1}: ${error.message}]`;
+    }
+  });
+
+  return await Promise.all(batchPromises);
+}
+
+/**
+ * Extract text from a single image using Azure OpenAI
+ */
+async function extractTextFromImageWithAzure(base64Image: string, pageNumber: number, documentType: string): Promise<string> {
   try {
-    console.log(`Using Azure OpenAI GPT-4 Vision for image ${pageNumber + 1} text extraction`);
+    console.log(`Using Azure OpenAI GPT-4 Vision for image ${pageNumber + 1} text extraction (${documentType})`);
 
     const options = {
       endpoint: AZURE_OPENAI_ENDPOINT,
@@ -628,7 +312,18 @@ async function extractTextFromImageWithAzure(base64Image, pageNumber, documentTy
     const timeoutId = setTimeout(() => controller.abort(), AZURE_TIMEOUT);
 
     try {
-      const systemPrompt = "You are an expert at extracting text from educational documents and chapter materials. Extract all handwritten and typed text from all images provided. IMPORTANT: For each image, clearly indicate which page number it represents. Format your response with clear page separators like '=== PAGE 1 ===', '=== PAGE 2 ===', etc. for each image in the order provided. SPECIAL FORMATTING: Convert mathematical equations to LaTeX format using $$ delimiters, and convert diagrams/flowcharts to Mermaid format using \`\`\`mermaid code blocks. DIAGRAM EXTRACTION: Look carefully for ANY visual diagrams, flowcharts, schematics, or structured visual elements. Convert ALL diagrams to proper Mermaid format using \`\`\`mermaid code blocks. Use correct Mermaid syntax with proper node definitions: [Node Name] not just Node Name. For decision points, use {Decision?} format. For processes, use [Process Name] format. For start/end points, use [Start] or [End] format. Use proper arrow syntax: -->, -.->, ==>, etc. Include ALL visible elements and connections from the diagram. If you see a diagram but are unsure of the type, use 'graph TD' as default. CRITICAL: Each node must be defined on its own line with complete labels. Never truncate node labels or leave them incomplete. If you cannot clearly see all elements of a diagram, describe it in text instead of creating invalid Mermaid syntax. MATHEMATICAL EQUATIONS: Convert ALL mathematical expressions to LaTeX format using $$ delimiters. Use proper LaTeX syntax: \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, \\\\pi, \\\\theta, etc.";
+      // Customize system prompt based on document type with enhanced MCQ and detail extraction
+      let systemPrompt = "You are an expert at extracting text from educational documents with PERFECT accuracy. Your task is CRITICAL - extract EVERY SINGLE DETAIL visible in the document without missing anything. IMPORTANT: For each image, clearly indicate which page number it represents. Format your response with clear page separators like '=== PAGE 1 ===', '=== PAGE 2 ===', etc. for each image in the order provided.";
+
+      if (documentType === 'student-sheet') {
+        systemPrompt += " MCQ EXTRACTION: For student answer sheets, carefully observe and extract MCQ circles and answer selections exactly as they appear. Look for circles, ovals, checkmarks, or any marks around answer options (A, B, C, D). Extract these naturally as they appear in the document. Also extract: handwritten content, mathematical equations, diagrams, question numbers, student responses, any marks or annotations, erased answers, partial answers, and ALL visible text. Convert mathematical equations to LaTeX format using $$ delimiters, and convert diagrams to Mermaid format using ```mermaid code blocks.";
+      } else if (documentType === 'answer') {
+        systemPrompt += " COMPREHENSIVE EXTRACTION: For answer keys, extract EVERY detail including: question numbers, ALL answer options (A, B, C, D), correct answers, mathematical equations and formulas, step-by-step solutions, marking schemes, point distributions, any explanatory text, diagrams, and ALL visible content. Convert mathematical equations to LaTeX format using $$ delimiters.";
+      } else if (documentType === 'question') {
+        systemPrompt += " COMPLETE EXTRACTION: For question papers, extract EVERY element: questions and their complete structure, ALL answer options (A, B, C, D), mathematical equations and formulas, diagrams and visual elements, instructions and options, question numbers, marks allocation, and ANY other visible text. Convert mathematical equations to LaTeX format using $$ delimiters.";
+      }
+
+      systemPrompt += " DIAGRAM EXTRACTION: Look carefully for ANY visual diagrams, flowcharts, schematics, or structured visual elements. Convert ALL diagrams to proper Mermaid format using ```mermaid code blocks. Use correct Mermaid syntax with proper node definitions: [Node Name] not just Node Name. For decision points, use {Decision?} format. For processes, use [Process Name] format. For start/end points, use [Start] or [End] format. Use proper arrow syntax: -->, -.->, ==>, etc. Include ALL visible elements and connections from the diagram. If you see a diagram but are unsure of the type, use 'graph TD' as default. CRITICAL: Each node must be defined on its own line with complete labels. Never truncate node labels or leave them incomplete. If you cannot clearly see all elements of a diagram, describe it in text instead of creating invalid Mermaid syntax. MATHEMATICAL EQUATIONS: Convert ALL mathematical expressions to LaTeX format using $$ delimiters. Use proper LaTeX syntax: \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, \\\\pi, \\\\theta, etc. FINAL CHECK: Before responding, ensure you have extracted EVERY visible text, symbol, mark, circle, number, and detail from the image. If anything is unclear, mark it as [UNCLEAR] but still attempt to extract it.";
 
       const response = await client.chat.completions.create({
         messages: [
@@ -641,7 +336,7 @@ async function extractTextFromImageWithAzure(base64Image, pageNumber, documentTy
             content: [
               {
                 type: "text",
-                text: `Extract all text from this image. DIAGRAM EXTRACTION: Look carefully for ANY visual diagrams, flowcharts, schematics, or structured visual elements. Convert ALL diagrams to proper Mermaid format using \`\`\`mermaid code blocks. Use correct Mermaid syntax with proper node definitions: [Node Name] not just Node Name. For decision points, use {Decision?} format. For processes, use [Process Name] format. For start/end points, use [Start] or [End] format. Use proper arrow syntax: -->, -.->, ==>, etc. Include ALL visible elements and connections from the diagram. If you see a diagram but are unsure of the type, use 'graph TD' as default. CRITICAL: Each node must be defined on its own line with complete labels. Never truncate node labels or leave them incomplete. If you cannot clearly see all elements of a diagram, describe it instead of creating invalid Mermaid syntax. MATHEMATICAL EQUATIONS: Convert ALL mathematical expressions to LaTeX format using $$ delimiters. Use proper LaTeX syntax: \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, \\\\pi, \\\\theta, etc.`
+                text: `Extract ALL text and details from this ${documentType} image exactly as they appear. Pay special attention to: MCQ circles and answer selections (circles, ovals, checkmarks around A, B, C, D options), handwritten content, typed text, question numbers, mathematical equations, diagrams, marks allocation, student responses, and any other visible marks or annotations. Extract circles and marks naturally as they appear in the document. If anything is unclear, mark it as [UNCLEAR] but still attempt to extract it.`
               },
               {
                 type: "image_url",
@@ -665,6 +360,7 @@ async function extractTextFromImageWithAzure(base64Image, pageNumber, documentTy
       }
 
       return response.choices[0].message.content;
+
     } catch (fetchError) {
       clearTimeout(timeoutId);
       if (fetchError.name === 'AbortError') {
@@ -673,77 +369,9 @@ async function extractTextFromImageWithAzure(base64Image, pageNumber, documentTy
       }
       throw fetchError;
     }
+
   } catch (error) {
     console.error(`Error extracting text from image:`, error);
     throw error;
   }
-}
-
-// Helper function to validate image URLs before processing
-async function validateImageUrls(imageUrls) {
-  const validatedUrls = [];
-  
-  for (const url of imageUrls) {
-    try {
-      console.log(`Validating image URL: ${url.substring(0, 50)}...`);
-      
-      // Handle data URLs (base64 encoded images)
-      if (url.startsWith('data:image/')) {
-        // Extract base64 data and validate format
-        const base64Match = url.match(/^data:image\/([a-zA-Z]+);base64,(.+)$/);
-        if (base64Match && base64Match[2]) {
-          const imageType = base64Match[1];
-          const base64Data = base64Match[2];
-          
-          // Basic validation: check if base64 string is not empty and has reasonable length
-          if (base64Data.length > 100) { // Minimum reasonable length for an image
-            validatedUrls.push(url);
-            console.log(`Data URL validated: ${imageType} image`);
-          } else {
-            console.warn(`Data URL too short to be valid: ${url.substring(0, 50)}...`);
-          }
-        } else {
-          console.warn(`Invalid data URL format: ${url.substring(0, 50)}...`);
-        }
-        continue;
-      }
-      
-      // Handle HTTP URLs (existing logic)
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), IMAGE_DOWNLOAD_TIMEOUT);
-      
-      try {
-        const response = await fetch(url, {
-          method: 'HEAD',
-          signal: controller.signal
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (response.ok) {
-          const contentType = response.headers.get('content-type');
-          if (contentType && contentType.startsWith('image/')) {
-            validatedUrls.push(url);
-            console.log(`HTTP URL validated: ${url}`);
-          } else {
-            console.warn(`URL does not point to an image: ${url} (Content-Type: ${contentType})`);
-          }
-        } else {
-          console.warn(`Image URL not accessible: ${url} (Status: ${response.status})`);
-        }
-      } catch (fetchError) {
-        clearTimeout(timeoutId);
-        if (fetchError.name === 'AbortError') {
-          console.warn(`Image URL validation timed out: ${url}`);
-        } else {
-          console.warn(`Error validating image URL: ${url}`, fetchError);
-        }
-      }
-    } catch (error) {
-      console.warn(`Failed to validate image URL: ${url.substring(0, 50)}...`, error);
-    }
-  }
-  
-  console.log(`Validated ${validatedUrls.length} out of ${imageUrls.length} image URLs`);
-  return validatedUrls;
 }

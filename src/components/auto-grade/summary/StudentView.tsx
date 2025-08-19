@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { useEffect, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
 
 interface StudentViewProps {
   student: any;
@@ -199,280 +200,253 @@ export function StudentView({ student, assessmentData, classData }: StudentViewP
   const handleEmailResults = () => {
     toast.info("Email functionality would be implemented here");
   };
-  
-  const handlePrintDetailedReport = () => {
-    window.print();
+
+  const handleSaveFeedback = () => {
+    // TODO: Implement save functionality
+    toast.success("Feedback saved successfully");
   };
-  
-  const handleSaveTeacherFeedback = () => {
-    // This would normally save to the database
-    setTeacherComment(customTeacherFeedback);
-    toast.success("Teacher feedback saved");
-  };
-  
-  // Calculate grade distribution for chart
-  const gradeDistribution = classData?.overview?.gradeDistribution || {
-    'A': 0, 'B+': 0, 'B': 0, 'B-': 0, 'C': 0, 'D': 0, 'F': 0
-  };
-  
-  // Simplified grades for visualization
-  const simplifiedGrades = {
-    'A': gradeDistribution['A'] || 0,
-    'B': (gradeDistribution['B+'] || 0) + (gradeDistribution['B'] || 0) + (gradeDistribution['B-'] || 0),
-    'C': gradeDistribution['C'] || 0,
-    'D': gradeDistribution['D'] || 0,
-    'F': gradeDistribution['F'] || 0
-  };
-  
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-      <div className="md:col-span-2 space-y-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex justify-between items-start">
-              <div>
-                <CardTitle className="text-xl">{student.name}</CardTitle>
-                <p className="text-sm text-muted-foreground">Student ID: {student.roll_number || "N/A"}</p>
-              </div>
-              <div className="text-right">
-                <span className="text-3xl font-bold">{assessmentData.grade}</span>
-                <p className="text-muted-foreground text-sm">{scorePercentage.toFixed(1)}%</p>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-3 gap-4 mt-4 mb-8">
-              <div className="text-center">
-                <p className="text-sm font-medium text-muted-foreground">Total Score</p>
-                <p className="text-2xl font-bold">{score}/{totalScore}</p>
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-muted-foreground">Class Rank</p>
-                <p className="text-2xl font-bold">{rank}/{totalStudents}</p>
-              </div>
-              <div className="text-center">
-                <p className="text-sm font-medium text-muted-foreground">AI Confidence</p>
-                <p className="text-2xl font-bold">{Math.round(overallConfidence)}%</p>
-              </div>
-            </div>
-            
-            {zeroScoreQuestions.length > 0 && (
-              <Alert variant="destructive" className="mb-6 bg-red-50 dark:bg-red-900/20">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>
-                  {zeroScoreQuestions.length === 1 
-                    ? `The answer for question ${zeroScoreQuestions[0]} doesn't match the expected content (0 marks).`
-                    : `Answers for questions ${zeroScoreQuestions.join(', ')} don't match the expected content (0 marks).`
-                  }
-                </AlertDescription>
-              </Alert>
-            )}
-            
-            <div className="space-y-6">
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Question Performance</h3>
-                <div className="space-y-4">
-                  {evaluation?.answers?.map((answer: any, index: number) => {
-                    const scoreValue = answer.score && Array.isArray(answer.score) ? answer.score[0] : 0;
-                    const maxScore = answer.score && Array.isArray(answer.score) ? answer.score[1] : 0;
-                    const isZeroScore = scoreValue === 0 && answer.answer_matches === false;
-                    
-                    return (
-                      <div key={index} className="space-y-1">
-                        <div className="flex justify-between items-center">
-                          <p className="font-medium">
-                            Question {answer.question_no}
-                            {isZeroScore && (
-                              <span className="ml-2 text-xs text-red-600 dark:text-red-400">
-                                (Answer doesn't match expected content)
-                              </span>
-                            )}
-                          </p>
-                          <p className="text-sm font-medium">{scoreValue}/{maxScore} points</p>
-                        </div>
-                        <Progress value={(maxScore > 0 ? (scoreValue / maxScore) * 100 : 0)} className="h-2" />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>Personalized Feedback</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-6">
-              <div>
-                <h4 className="font-semibold text-primary mb-2 flex items-center">
-                  <CheckCircle2 className="h-4 w-4 mr-2 text-green-600" />
-                  Strengths
-                </h4>
-                <ul className="list-disc pl-5 space-y-1">
-                  {strengths.length > 0 ? (
-                    strengths.map((strength, i) => (
-                      <li key={i} className="text-sm">{strength}</li>
-                    ))
-                  ) : (
-                    <li className="text-sm">Continue working to build strengths in core concepts.</li>
-                  )}
-                </ul>
-              </div>
-              
-              <div>
-                <h4 className="font-semibold text-primary mb-2 flex items-center">
-                  <TrendingUp className="h-4 w-4 mr-2 text-blue-600" />
-                  Areas to Improve
-                </h4>
-                <ul className="list-disc pl-5 space-y-1">
-                  {areasForImprovement.length > 0 ? (
-                    areasForImprovement.map((area, i) => (
-                      <li key={i} className="text-sm">{area}</li>
-                    ))
-                  ) : (
-                    <li className="text-sm">Review the core concepts covered in this assessment.</li>
-                  )}
-                </ul>
-              </div>
-              
-              <div>
-                <h4 className="font-semibold text-primary mb-2 flex items-center">
-                  <BookMarked className="h-4 w-4 mr-2 text-purple-600" />
-                  Study Recommendations
-                </h4>
-                <ul className="list-disc pl-5 space-y-1">
-                  {studyRecommendations.length > 0 ? (
-                    studyRecommendations.map((recommendation, i) => (
-                      <li key={i} className="text-sm">{recommendation}</li>
-                    ))
-                  ) : (
-                    <li className="text-sm">Create a structured study plan focusing on the topics covered in this assessment.</li>
-                  )}
-                </ul>
-              </div>
-              
-              <div>
-                <h4 className="font-semibold text-primary mb-2 flex items-center">
-                  <BookOpen className="h-4 w-4 mr-2 text-indigo-600" />
-                  Teacher's Feedback
-                </h4>
-                <p className="text-sm">{teacherComment}</p>
-                
-                {/* Teacher input area for custom feedback */}
-                <div className="mt-4 space-y-2">
-                  <label htmlFor="teacherFeedback" className="text-sm font-medium">
-                    Add/Edit Teacher Feedback:
-                  </label>
-                  <Textarea
-                    id="teacherFeedback"
-                    value={customTeacherFeedback}
-                    onChange={(e) => setCustomTeacherFeedback(e.target.value)}
-                    placeholder="Enter personalized feedback for this student..."
-                    className="min-h-[100px]"
-                  />
-                  <Button onClick={handleSaveTeacherFeedback} size="sm">
-                    Save Feedback
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+
+  // Calculate section-wise performance
+  const getSectionPerformance = () => {
+    if (!evaluation?.answers) return {};
+    
+    const sectionStats: { [key: string]: { correct: number; total: number; percentage: number } } = {};
+    
+    evaluation.answers.forEach((answer: any) => {
+      const section = answer.section || "Main Section";
+      const scoreValue = answer.score && Array.isArray(answer.score) ? answer.score[0] : 0;
+      const maxScore = answer.score && Array.isArray(answer.score) ? answer.score[1] : 0;
       
-      <div className="space-y-6">
+      if (!sectionStats[section]) {
+        sectionStats[section] = { correct: 0, total: 0, percentage: 0 };
+      }
+      
+      sectionStats[section].correct += scoreValue;
+      sectionStats[section].total += maxScore;
+    });
+    
+    // Calculate percentages
+    Object.keys(sectionStats).forEach(section => {
+      if (sectionStats[section].total > 0) {
+        sectionStats[section].percentage = Math.round((sectionStats[section].correct / sectionStats[section].total) * 100);
+      }
+    });
+    
+    return sectionStats;
+  };
+
+  const sectionPerformance = getSectionPerformance();
+
+  return (
+    <div className="space-y-6">
+      {/* Student Performance Overview */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BookOpen className="h-5 w-5" />
+            Performance Overview
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div className="text-center">
+              <p className="text-2xl font-bold text-primary">{scorePercentage}%</p>
+              <p className="text-sm text-muted-foreground">Overall Score</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold">{score}/{totalScore}</p>
+              <p className="text-sm text-muted-foreground">Marks Obtained</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold">{rank}/{totalStudents}</p>
+              <p className="text-sm text-muted-foreground">Class Rank</p>
+            </div>
+            <div className="text-center">
+              <p className="text-2xl font-bold">{Math.round(overallConfidence)}%</p>
+              <p className="text-sm text-muted-foreground">Confidence</p>
+            </div>
+          </div>
+
+          {/* Questions Summary */}
+          {evaluation?.total_questions_detected && (
+            <div className="mb-6">
+              <h4 className="text-lg font-semibold mb-3">Questions Summary</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground mb-2">Total Questions Detected</p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {evaluation.total_questions_detected}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground mb-2">Questions by Section</p>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(evaluation.questions_by_section || {}).map(([section, count]) => (
+                      <Badge key={section} variant="outline" className="text-sm">
+                        {section}: {count}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Section-wise Performance */}
+          {Object.keys(sectionPerformance).length > 0 && (
+            <div className="mb-6">
+              <h4 className="text-lg font-semibold mb-3">Section-wise Performance</h4>
+              <div className="space-y-3">
+                {Object.entries(sectionPerformance).map(([section, stats]) => (
+                  <div key={section} className="flex items-center justify-between p-3 bg-muted rounded-lg">
+                    <div>
+                      <p className="font-medium">{section}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {stats.correct}/{stats.total} marks
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold">{stats.percentage}%</p>
+                      <Progress value={stats.percentage} className="w-20 h-2" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Progress Bar */}
+          <div className="space-y-2">
+            <div className="flex justify-between text-sm">
+              <span>Progress</span>
+              <span>{scorePercentage}%</span>
+            </div>
+            <Progress value={scorePercentage} className="h-2" />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Strengths and Areas for Improvement */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Strengths */}
         <Card>
           <CardHeader>
-            <CardTitle>Performance Comparison</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <div className="flex justify-between mb-1">
-                <span className="text-sm">Student Score</span>
-                <span className="text-sm">{scorePercentage.toFixed(1)}%</span>
-              </div>
-              <Progress value={scorePercentage} className="h-2 bg-muted" />
-            </div>
-            
-            <div>
-              <div className="flex justify-between mb-1">
-                <span className="text-sm">Class Average</span>
-                <span className="text-sm">{classAverage.toFixed(1)}%</span>
-              </div>
-              <Progress value={classAverage} className="h-2 bg-blue-100" />
-            </div>
-            
-            <div className="pt-2">
-              <div className="flex justify-between text-sm">
-                <span>Student vs. Class Average</span>
-                <span className={scorePercentage > classAverage ? "text-green-600" : "text-red-600"}>
-                  {(scorePercentage - classAverage).toFixed(1)}%
-                </span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardHeader>
-            <CardTitle>Grade Distribution</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-green-600">
+              <TrendingUp className="h-5 w-5" />
+              Strengths
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex gap-1 h-24 items-end">
-              {Object.entries(simplifiedGrades).map(([grade, count]) => {
-                // Ensure count is a number
-                const numericCount = typeof count === 'number' ? count : 0;
-                
-                return (
-                  <div key={grade} className="flex-1 flex flex-col items-center">
-                    <div 
-                      className={`w-full ${getGradeColor(grade)} rounded-t`} 
-                      style={{ 
-                        height: `${(numericCount / totalStudents) * 100}%`,
-                        minHeight: '4px'
-                      }}
-                    ></div>
-                    <div className="mt-2 text-xs">{grade}</div>
-                    <div className="text-xs text-muted-foreground">{numericCount.toString()}</div>
-                  </div>
-                );
-              })}
-            </div>
-            <Separator className="my-4" />
-            <p className="text-xs text-center">
-              Student's grade: <span className="font-medium">{assessmentData.grade}</span>
-            </p>
+            {strengths.length > 0 ? (
+              <ul className="space-y-2">
+                {strengths.map((strength, index) => (
+                  <li key={index} className="flex items-start gap-2">
+                    <CheckCircle2 className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">{strength}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">No specific strengths identified yet.</p>
+            )}
           </CardContent>
         </Card>
-        
+
+        {/* Areas for Improvement */}
         <Card>
           <CardHeader>
-            <CardTitle>Actions</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-orange-600">
+              <AlertCircle className="h-5 w-5" />
+              Areas for Improvement
+            </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
-            <Button variant="outline" className="w-full justify-start" onClick={handleEmailResults}>
-              <Mail className="mr-2 h-4 w-4" /> Email Results to Student
-            </Button>
-            <Button variant="outline" className="w-full justify-start" onClick={handlePrintDetailedReport}>
-              <FileText className="mr-2 h-4 w-4" /> Print Detailed Report
-            </Button>
+          <CardContent>
+            {areasForImprovement.length > 0 ? (
+              <ul className="space-y-2">
+                {areasForImprovement.map((area, index) => (
+                  <li key={index} className="flex items-start gap-2">
+                    <XCircle className="h-4 w-4 text-orange-600 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm">{area}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">No specific areas for improvement identified yet.</p>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Study Recommendations */}
+      {studyRecommendations.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-blue-600">
+              <BookMarked className="h-5 w-5" />
+              Study Recommendations
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ul className="space-y-2">
+              {studyRecommendations.map((recommendation, index) => (
+                <li key={index} className="flex items-start gap-2">
+                  <div className="h-2 w-2 bg-blue-600 rounded-full mt-2 flex-shrink-0" />
+                  <span className="text-sm">{recommendation}</span>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Teacher Feedback */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-5 w-5" />
+            Teacher Feedback
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium">Personalized Feedback</label>
+              <Textarea
+                value={customTeacherFeedback}
+                onChange={(e) => setCustomTeacherFeedback(e.target.value)}
+                placeholder="Enter personalized feedback for the student..."
+                className="mt-2"
+                rows={4}
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={handleSaveFeedback} size="sm">
+                Save Feedback
+              </Button>
+              <Button variant="outline" onClick={handleEmailResults} size="sm">
+                <Mail className="h-4 w-4 mr-2" />
+                Email Results
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Zero Score Questions Alert */}
+      {zeroScoreQuestions.length > 0 && (
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            <strong>Attention needed:</strong> The following questions received zero marks and may need review: 
+            {zeroScoreQuestions.map((q, index) => (
+              <span key={q}>
+                {index === 0 ? ' ' : index === zeroScoreQuestions.length - 1 ? ' and ' : ', '}
+                <strong>Q{q}</strong>
+              </span>
+            ))}
+          </AlertDescription>
+        </Alert>
+      )}
     </div>
   );
-}
-
-function getGradeColor(grade: string): string {
-  switch (grade) {
-    case 'A': return 'bg-green-500';
-    case 'B': return 'bg-blue-500';
-    case 'C': return 'bg-yellow-500';
-    case 'D': return 'bg-orange-500';
-    case 'F': return 'bg-red-500';
-    default: return 'bg-gray-500';
-  }
 }

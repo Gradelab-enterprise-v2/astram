@@ -144,7 +144,7 @@ Please try uploading a different PDF file.`;
     console.log(`Processing ${maxPages} pages with optimized batch processing`);
     
     // Use larger batches for better performance
-    const BATCH_SIZE = 25; // Increased from 5-10 to 25 for better performance
+    const BATCH_SIZE = 10; // Optimized for Azure OpenAI batch processing
     const batches = [];
     
     for (let i = 0; i < maxPages; i += BATCH_SIZE) {
@@ -155,7 +155,7 @@ Please try uploading a different PDF file.`;
     
     // Process batches with concurrent requests for better performance
     let allExtractedText: string[] = [];
-    const CONCURRENT_BATCHES = 4; // Process 4 batches simultaneously
+    const CONCURRENT_BATCHES = 5; // Optimized for Azure OpenAI concurrent processing
     
     for (let i = 0; i < batches.length; i += CONCURRENT_BATCHES) {
       const currentBatchGroup = batches.slice(i, i + CONCURRENT_BATCHES);
