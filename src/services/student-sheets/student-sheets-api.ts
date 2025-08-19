@@ -140,18 +140,23 @@ export const uploadAnswerSheet = async (params: UploadAnswerSheetParams): Promis
   }
 };
 
-// Extract text from the uploaded answer sheet
+// Extract text from the uploaded answer sheet - OPTIMIZED VERSION
 export const extractTextFromSheet = async (sheet: StudentAnswerSheet): Promise<StudentAnswerSheet> => {
   try {
+    console.log(`Starting optimized text extraction for sheet ID: ${sheet.id}`);
+    
     // 1. Update status to processing
     const { error: updateError } = await supabase
       .from("student_answer_sheets")
-      .update({ status: 'processing' })
+      .update({ 
+        status: 'processing',
+        extracted_text: "Text extraction in progress: Preparing document..."
+      })
       .eq("id", sheet.id);
       
     if (updateError) throw updateError;
     
-    // 2. Call the edge function to extract text
+    // 2. Fetch the PDF file
     const response = await fetch(sheet.file_url);
     const fileBlob = await response.blob();
     const file = new File([fileBlob], "answer-sheet.pdf", { type: "application/pdf" });
@@ -159,68 +164,137 @@ export const extractTextFromSheet = async (sheet: StudentAnswerSheet): Promise<S
     // Import needed utility
     const { convertPdfToImages } = await import("@/utils/pdf-processor");
     
-    // Convert PDF to images with higher quality settings for better OCR
+    // Update status to show PDF conversion
+    await supabase
+      .from("student_answer_sheets")
+      .update({
+        extracted_text: "Text extraction in progress: Converting PDF to images..."
+      })
+      .eq("id", sheet.id);
+    
+    // Convert PDF to images with optimized settings for better OCR
     const images = await convertPdfToImages(file, {
-      quality: 1.0,
-      grayscale: true,
-      maxWidth: 2000,
-      imageFormat: 'png'
+      quality: 0.95,     // Slightly reduced for better performance
+      grayscale: true,   // Keep grayscale for better OCR
+      maxWidth: 2000,    // High resolution for OCR
+      imageFormat: 'png' // PNG format for better OCR compatibility
     });
     
-    // Initialize extracted text with page markers
-    let extractedText = "";
+    console.log(`Converted PDF to ${images.length} images`);
     
-    // Process images in batches of 10
-    const batchSize = 10;
-    for (let i = 0; i < images.length; i += batchSize) {
-      const batchImages = images.slice(i, i + batchSize);
-      const batchBase64Images = batchImages.map(img => img.split(',')[1]);
+    if (images.length === 0) {
+      throw new Error("Failed to convert PDF to images");
+    }
+    
+    // 3. Process images in batches of 10 for optimal Azure OpenAI processing
+    const BATCH_SIZE = 10; // Optimized for Azure OpenAI batch processing
+    const batches = [];
+    
+    for (let i = 0; i < images.length; i += BATCH_SIZE) {
+      batches.push(images.slice(i, i + BATCH_SIZE));
+    }
+    
+    console.log(`Created ${batches.length} batches for processing`);
+    
+    // 4. Process batches with concurrent requests for better performance - SAME AS RESOURCES TAB
+    let allExtractedText: string[] = [];
+    
+    // Process batches in parallel with concurrency limit - optimized for Azure OpenAI
+    const CONCURRENT_BATCHES = 3; // Optimized for Azure OpenAI concurrent processing
+    
+    for (let i = 0; i < batches.length; i += CONCURRENT_BATCHES) {
+      const currentBatchGroup = batches.slice(i, i + CONCURRENT_BATCHES);
       
-      // Update status to show current batch being processed
+      // Update progress
       await supabase
         .from("student_answer_sheets")
         .update({
-          extracted_text: `Processing pages ${i + 1} to ${Math.min(i + batchSize, images.length)} of ${images.length}...\n\n${extractedText}`,
-          status: 'processing'
+          extracted_text: `Text extraction in progress: Processing batches ${i + 1} to ${Math.min(i + CONCURRENT_BATCHES, batches.length)} of ${batches.length}...`
         })
         .eq("id", sheet.id);
       
-      // Extract text from current batch
-      const { data, error } = await supabase.functions.invoke("extract-text", {
-        body: {
-          documentType: 'student-sheet',
-          sheetId: sheet.id,
-          base64Images: batchBase64Images
+      // Process current batch group concurrently
+      const batchPromises = currentBatchGroup.map(async (batchImages, batchIndex) => {
+        const globalBatchIndex = i + batchIndex;
+        const batchBase64Images = batchImages.map(img => img.split(',')[1]);
+        
+        try {
+          console.log(`Processing batch ${globalBatchIndex + 1} with ${batchImages.length} images...`);
+          
+          const { data, error } = await supabase.functions.invoke("extract-text", {
+            body: {
+              documentType: 'student-sheet', // Keep student-sheet for student answer sheets
+              sheetId: sheet.id, // Use sheetId for student-sheet document type
+              imageUrls: batchBase64Images.map(base64 => `data:image/png;base64,${base64}`) // Convert to image URLs for OpenAI
+            }
+          });
+          
+          if (error) {
+            console.error(`Error in batch ${globalBatchIndex + 1}:`, error);
+            return `[Error processing batch ${globalBatchIndex + 1}: ${error.message || 'Unknown error'}]`;
+          }
+          
+          if (!data.success) {
+            return `[Failed to extract text from batch ${globalBatchIndex + 1}: ${data.error || 'Unknown error'}]`;
+          }
+          
+          return data.extractedText || `[No text extracted from batch ${globalBatchIndex + 1}]`;
+        } catch (batchError) {
+          console.error(`Error processing batch ${globalBatchIndex + 1}:`, batchError);
+          return `[Error processing batch ${globalBatchIndex + 1}: ${batchError.message || 'Unknown error'}]`;
         }
       });
       
-      if (error) throw error;
+      // Wait for all batches in current group to complete
+      const batchResults = await Promise.all(batchPromises);
       
-      if (!data.success) {
-        throw new Error(data.error || `Failed to extract text from pages ${i + 1} to ${Math.min(i + batchSize, images.length)}`);
-      }
+      // Add results to the main array
+      allExtractedText.push(...batchResults);
       
-      // Append the extracted text (it should already have proper page markers)
-      extractedText += `\n\n${data.extractedText}\n`;
-      
-      // Update the sheet with current progress
+      // Update paper with partial results for better user experience
+      const partialText = allExtractedText.join("\n\n--- PAGE BREAK ---\n\n");
       await supabase
         .from("student_answer_sheets")
         .update({
-          extracted_text: extractedText,
+          extracted_text: partialText,
           status: 'processing'
         })
         .eq("id", sheet.id);
+        
+      console.log(`Completed batch group ${Math.floor(i / CONCURRENT_BATCHES) + 1}`);
+      
+      // Small delay between batch groups to prevent overwhelming the API
+      if (i + CONCURRENT_BATCHES < batches.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
     
-    // Final update with completed status
+    // 5. Combine all extracted text
+    const combinedText = allExtractedText.join("\n\n--- PAGE BREAK ---\n\n");
+    
+    console.log("Text extraction complete, updating sheet data...");
+    
+    // Check if we actually extracted any meaningful text
+    const hasMeaningfulText = allExtractedText.some(text => {
+      return text && !text.includes('[Error processing') && !text.includes('[Failed to extract') && !text.includes('[No text extracted');
+    });
+    
+    if (!hasMeaningfulText) {
+      throw new Error("No meaningful text was extracted from any pages. Please try again.");
+    }
+    
+    // 6. Final update with completed status
     const { data: updatedSheet, error: finalUpdateError } = await supabase
       .from("student_answer_sheets")
       .update({
-        extracted_text: extractedText,
+        extracted_text: combinedText,
         has_extracted_text: true,
         status: 'completed',
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        // Note: Using same optimized batch processing as resources tab
+        // - Batch size: 25 (same as resources)
+        // - Concurrency: 4 batches (same as resources)
+        // - API: OpenAI (same as resources tab)
       })
       .eq("id", sheet.id)
       .select()
@@ -228,17 +302,37 @@ export const extractTextFromSheet = async (sheet: StudentAnswerSheet): Promise<S
       
     if (finalUpdateError) throw finalUpdateError;
     
+    console.log("Sheet data updated successfully with extracted text");
     return updatedSheet;
+    
   } catch (error) {
+    console.error("Text extraction failed:", error);
+    
     // Update status to failed if there's an error
-    await supabase
-      .from("student_answer_sheets")
-      .update({
-        status: 'failed',
-        updated_at: new Date().toISOString()
-      })
-      .eq("id", sheet.id);
+    try {
+      const errorMessage = error.message || "Unknown error occurred during text extraction.";
       
+      let detailedError = `The OCR service was unable to properly extract text from this document.\n\nError: ${errorMessage}`;
+      
+      // Add note about large documents if the error suggests it might be a large document issue
+      if (errorMessage.includes('timeout') || errorMessage.includes('large') || errorMessage.includes('25')) {
+        detailedError += `\n\nNote: For large documents, we process in batches of 25 pages for optimal performance (same batch size as resources tab).`;
+      }
+      
+      detailedError += `\n\nPlease try again or contact support if the problem persists.`;
+      
+      await supabase
+        .from("student_answer_sheets")
+        .update({
+          status: 'failed',
+          extracted_text: detailedError,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", sheet.id);
+    } catch (updateError) {
+      console.error("Failed to update sheet with error information:", updateError);
+    }
+    
     throw error;
   }
 };

@@ -1,4 +1,4 @@
-// Debug script to get the actual error message from extract-text function
+// Debug script to get detailed error information from extract-text function
 import { createClient } from '@supabase/supabase-js';
 import { config } from 'dotenv';
 
@@ -13,42 +13,41 @@ const supabase = createClient(
 async function debugExtractTextFunction() {
   console.log('🔍 Debugging extract-text function...\n');
 
-  // Test student sheets with detailed error handling
-  console.log('📝 Testing student sheets with detailed error...');
+  // Test with minimal valid request
+  console.log('📝 Testing student sheet request with sheetId...');
   try {
-    const studentSheetRequest = {
+    const request = {
       documentType: 'student-sheet',
       sheetId: 'test-sheet-123',
-      base64Images: ['base64-image-data-1', 'base64-image-data-2']
+      imageUrls: ['https://example.com/test-image.png']
     };
 
-    const response = await fetch(`${process.env.VITE_SUPABASE_URL}/functions/v1/extract-text`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${process.env.VITE_SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(studentSheetRequest)
+    console.log('Request body:', JSON.stringify(request, null, 2));
+
+    const { data, error } = await supabase.functions.invoke('extract-text', {
+      body: request
     });
 
-    const responseText = await response.text();
-    console.log('Status:', response.status);
-    console.log('Status Text:', response.statusText);
-    console.log('Response Body:', responseText);
-
-    if (!response.ok) {
-      console.log('❌ Function failed with status:', response.status);
-      try {
-        const errorData = JSON.parse(responseText);
-        console.log('Error details:', errorData);
-      } catch (parseError) {
-        console.log('Could not parse error response as JSON');
+    if (error) {
+      console.log('❌ Error response:');
+      console.log('Error message:', error.message);
+      console.log('Error context:', error.context);
+      
+      // Try to get the response body for more details
+      if (error.context && error.context.body) {
+        try {
+          const responseText = await error.context.body.text();
+          console.log('Response body:', responseText);
+        } catch (bodyError) {
+          console.log('Could not read response body:', bodyError.message);
+        }
       }
     } else {
-      console.log('✅ Function succeeded');
+      console.log('✅ Success response:', data);
     }
   } catch (error) {
-    console.log('❌ Request failed:', error.message);
+    console.log('❌ Exception caught:', error.message);
+    console.log('Error details:', error);
   }
 }
 

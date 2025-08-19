@@ -1,7 +1,6 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
-import { AzureOpenAI } from 'https://esm.sh/openai@latest';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -75,33 +74,15 @@ serve(async (req) => {
   }
 
   try {
-    // Azure OpenAI Configuration (same as extract-text function)
-    const AZURE_OPENAI_API_KEY = Deno.env.get('AZURE_OPENAI_API_KEY');
-    const AZURE_OPENAI_ENDPOINT = Deno.env.get('AZURE_OPENAI_ENDPOINT');
-    const AZURE_OPENAI_DEPLOYMENT = Deno.env.get('AZURE_OPENAI_DEPLOYMENT');
-    const AZURE_OPENAI_API_VERSION = Deno.env.get('AZURE_OPENAI_API_VERSION') || '2024-08-01-preview';
-    
-    // Debug: Log the configuration (without exposing the API key)
-    console.log('Azure OpenAI Configuration:');
-    console.log('- AZURE_OPENAI_ENDPOINT:', AZURE_OPENAI_ENDPOINT);
-    console.log('- AZURE_OPENAI_DEPLOYMENT:', AZURE_OPENAI_DEPLOYMENT);
-    console.log('- AZURE_OPENAI_API_VERSION:', AZURE_OPENAI_API_VERSION);
-    console.log('- AZURE_OPENAI_API_KEY:', AZURE_OPENAI_API_KEY ? '[SET]' : '[NOT SET]');
-    
-    // Check if we have Azure OpenAI configured, otherwise fall back to OpenAI
-    const useAzureOpenAI = AZURE_OPENAI_API_KEY && AZURE_OPENAI_ENDPOINT && AZURE_OPENAI_DEPLOYMENT;
+    // OpenAI Configuration
     const OPENAI_API_KEY = Deno.env.get('OPENAI_API_KEY');
     
-    if (!useAzureOpenAI && !OPENAI_API_KEY) {
-      throw new Error('Neither Azure OpenAI nor OpenAI credentials are configured. Please set either Azure OpenAI credentials or OPENAI_API_KEY.');
+    if (!OPENAI_API_KEY) {
+      throw new Error('OpenAI API key not configured. Please set OPENAI_API_KEY.');
     }
     
-    if (useAzureOpenAI) {
-      console.log('Using Azure OpenAI for question generation');
-    } else {
-      console.log('Using OpenAI API for question generation (fallback)');
-    }
-
+    console.log('Using OpenAI for question generation');
+    
     const requestData: QuestionGenerationRequest = await req.json();
     const {
       subject,
@@ -173,11 +154,6 @@ serve(async (req) => {
           console.log(`Generating MCQ chunk ${chunkIndex + 1}/${mcqChunks} with ${questionsInThisChunk} questions`);
           
           const chunkQuestions = await generateQuestionChunk({
-            AZURE_OPENAI_API_KEY,
-            AZURE_OPENAI_ENDPOINT,
-            AZURE_OPENAI_DEPLOYMENT,
-            AZURE_OPENAI_API_VERSION,
-            useAzureOpenAI,
             OPENAI_API_KEY,
             subject,
             topic,
@@ -207,11 +183,6 @@ serve(async (req) => {
           console.log(`Generating Theory chunk ${chunkIndex + 1}/${theoryChunks} with ${questionsInThisChunk} questions`);
           
           const chunkQuestions = await generateQuestionChunk({
-            AZURE_OPENAI_API_KEY,
-            AZURE_OPENAI_ENDPOINT,
-            AZURE_OPENAI_DEPLOYMENT,
-            AZURE_OPENAI_API_VERSION,
-            useAzureOpenAI,
             OPENAI_API_KEY,
             subject,
             topic,
@@ -241,11 +212,6 @@ serve(async (req) => {
         console.log(`Generating chunk ${chunkIndex + 1}/${chunks} with ${questionsInThisChunk} questions`);
         
         const chunkQuestions = await generateQuestionChunk({
-          AZURE_OPENAI_API_KEY,
-          AZURE_OPENAI_ENDPOINT,
-          AZURE_OPENAI_DEPLOYMENT,
-          AZURE_OPENAI_API_VERSION,
-          useAzureOpenAI,
           OPENAI_API_KEY,
           subject,
           topic,
@@ -289,12 +255,7 @@ serve(async (req) => {
 
 async function generateQuestionChunk(
   params: {
-    AZURE_OPENAI_API_KEY: string;
-    AZURE_OPENAI_ENDPOINT: string;
-    AZURE_OPENAI_DEPLOYMENT: string;
-    AZURE_OPENAI_API_VERSION: string;
-    useAzureOpenAI: boolean;
-    OPENAI_API_KEY: string | undefined;
+    OPENAI_API_KEY: string;
     subject: any;
     topic: string;
     questionType: 'mcq' | 'theory';
@@ -310,11 +271,6 @@ async function generateQuestionChunk(
   totalChunks: number
 ): Promise<Question[]> {
   const {
-    AZURE_OPENAI_API_KEY,
-    AZURE_OPENAI_ENDPOINT,
-    AZURE_OPENAI_DEPLOYMENT,
-    AZURE_OPENAI_API_VERSION,
-    useAzureOpenAI,
     OPENAI_API_KEY,
     subject,
     topic,
@@ -461,109 +417,41 @@ ${questionType === 'mcq' ?
 
       let response: any;
       
-      if (useAzureOpenAI) {
-        // Use Azure OpenAI SDK (same as extract-text function)
-        console.log(`Using Azure OpenAI SDK for question generation`);
-        
-        const options = {
-          endpoint: AZURE_OPENAI_ENDPOINT,
-          apiKey: AZURE_OPENAI_API_KEY,
-          deployment: AZURE_OPENAI_DEPLOYMENT,
-          apiVersion: AZURE_OPENAI_API_VERSION
-        };
-        const client = new AzureOpenAI(options);
-        
-        try {
-          // Try with json_schema first (for newer API versions)
-          response = await client.chat.completions.create({
-            messages: [
-              { role: "system", content: systemMessage },
-              { role: "user", content: userMessage }
-            ],
-            temperature: 0.7,
-            response_format: {
-              type: "json_schema",
-              json_schema: {
-                name: "QuestionGenerationResponse",
-                strict: true,
-                schema: jsonSchema
-              }
-            },
-            max_tokens: 4000,
-          });
-        } catch (azureError) {
-          console.error("Azure OpenAI SDK error with json_schema:", azureError);
-          
-          // If json_schema fails, try with json_object (fallback for older API versions)
-          if (azureError.message && azureError.message.includes('json_schema')) {
-            console.log("Falling back to json_object response format");
-            try {
-              response = await client.chat.completions.create({
-                messages: [
-                  { role: "system", content: systemMessage },
-                  { role: "user", content: userMessage }
-                ],
-                temperature: 0.7,
-                response_format: { type: "json_object" },
-                max_tokens: 4000,
-              });
-            } catch (fallbackError) {
-              console.error("Azure OpenAI SDK error with json_object:", fallbackError);
-              throw new Error(`Azure OpenAI SDK error: ${fallbackError.message || fallbackError}`);
-            }
-          } else {
-            throw new Error(`Azure OpenAI SDK error: ${azureError.message || azureError}`);
-          }
-        }
-      } else {
-        // Use OpenAI API directly
-        console.log(`Using OpenAI API for question generation`);
-        
-        const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${OPENAI_API_KEY}`
-          },
-          body: JSON.stringify({
-            model: "gpt-4o",
-            messages: [
-              { role: "system", content: systemMessage },
-              { role: "user", content: userMessage }
-            ],
-            temperature: 0.7,
-            response_format: { type: "json_object" },
-            max_tokens: 4000,
-          }),
-          signal: controller.signal
-        });
-        
-        if (!openaiResponse.ok) {
-          const errorText = await openaiResponse.text();
-          throw new Error(`OpenAI API error: ${errorText}`);
-        }
-        
-        response = await openaiResponse.json();
+      const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${OPENAI_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: systemMessage },
+            { role: "user", content: userMessage }
+          ],
+          temperature: 0.7,
+          response_format: { type: "json_object" },
+          max_tokens: 4000,
+        }),
+        signal: controller.signal
+      });
+      
+      if (!openaiResponse.ok) {
+        const errorText = await openaiResponse.text();
+        throw new Error(`OpenAI API error: ${errorText}`);
       }
+      
+      response = await openaiResponse.json();
 
       clearTimeout(timeoutId);
 
       // Handle response based on API type
       let generatedContent: string;
       
-      if (useAzureOpenAI) {
-        // Azure OpenAI SDK response
-        if (!response.choices || !response.choices[0] || !response.choices[0].message) {
-          throw new Error("Invalid response from Azure OpenAI API");
-        }
-        generatedContent = response.choices[0].message.content;
-      } else {
-        // OpenAI fetch response
-        if (!response.choices || !response.choices[0] || !response.choices[0].message) {
-          throw new Error("Invalid response from OpenAI API");
-        }
-        generatedContent = response.choices[0].message.content;
+      if (!response.choices || !response.choices[0] || !response.choices[0].message) {
+        throw new Error("Invalid response from OpenAI API");
       }
+      generatedContent = response.choices[0].message.content;
       
       console.log("Raw response received, attempting to parse...");
       console.log("Generated content length:", generatedContent?.length || 0);

@@ -4,6 +4,7 @@ import { formatPaperData } from "./test-paper-base";
 import { convertPdfToImages, dataUrlToBlob, validateFile, getPdfTroubleshootingTips } from "@/utils/pdf-processor";
 import { toast } from "sonner";
 import { ensureBucket, userHasBucketAccess } from "@/utils/initialize-storage";
+import { uploadImageToLocal } from "@/lib/storage-config";
 
 // Extract text from a paper
 export const extractText = async (paperId: string): Promise<TestPaper> => {
@@ -138,61 +139,42 @@ Please try uploading a different PDF file.`;
       throw new Error("Failed to convert PDF to images");
     }
 
-    // Process all pages, but be mindful of potential timeout issues
-    // For large documents, process more pages but in smaller batches
-    const maxPages = Math.min(imageDataUrls.length, imageDataUrls.length > 40 ? 50 : 20);
-    if (imageDataUrls.length > maxPages) {
-      toast.warning(`Processing the first ${maxPages} pages out of ${imageDataUrls.length} total pages to ensure reliable extraction.`);
-      console.log(`Limited to processing ${maxPages} pages out of ${imageDataUrls.length} total pages`);
+    // Process all pages with optimized batch processing
+    const maxPages = imageDataUrls.length; // Process all pages
+    console.log(`Processing ${maxPages} pages with optimized batch processing`);
+    
+    // Use larger batches for better performance
+    const BATCH_SIZE = 10; // Optimized for Azure OpenAI batch processing
+    const batches = [];
+    
+    for (let i = 0; i < maxPages; i += BATCH_SIZE) {
+      batches.push(imageDataUrls.slice(i, i + BATCH_SIZE));
     }
     
-    // Check if the user has access to the ocr-images bucket
-    const hasAccess = await userHasBucketAccess('ocr-images');
+    console.log(`Created ${batches.length} batches for processing`);
     
-    // Update status about the approach we're taking
-    await supabase
-      .from("test_papers")
-      .update({
-        extracted_text: hasAccess 
-          ? "Text extraction in progress: Uploading images for processing..." 
-          : "Text extraction in progress: Processing images..."
-      })
-      .eq("id", paperId);
+    // Process batches with concurrent requests for better performance
+    let allExtractedText: string[] = [];
+    const CONCURRENT_BATCHES = 5; // Optimized for Azure OpenAI concurrent processing
     
-    if (!hasAccess) {
-      console.log("Using direct processing method");
+    for (let i = 0; i < batches.length; i += CONCURRENT_BATCHES) {
+      const currentBatchGroup = batches.slice(i, i + CONCURRENT_BATCHES);
       
-      // Process in batches using base64 encoding for the images
-      // Use smaller batches for large documents to prevent timeouts
-      const batchSize = imageDataUrls.length > 40 ? 5 : 10; // Smaller batches for large documents
-      const batches = [];
+      // Update progress
+      await supabase
+        .from("test_papers")
+        .update({
+          extracted_text: `Text extraction in progress: Processing batches ${i + 1} to ${Math.min(i + CONCURRENT_BATCHES, batches.length)} of ${batches.length}...`
+        })
+        .eq("id", paperId);
       
-      for (let i = 0; i < Math.min(maxPages, imageDataUrls.length); i += batchSize) {
-        batches.push(imageDataUrls.slice(i, i + batchSize));
-      }
-      
-      console.log(`Created ${batches.length} batches for processing`);
-      
-      let allExtractedText = [];
-      
-      for (let i = 0; i < batches.length; i++) {
-        const batchUrls = batches[i];
-        console.log(`Processing batch ${i + 1} of ${batches.length} with ${batchUrls.length} images...`);
-        
-        // Update progress in the database for frontend to read
-        await supabase
-          .from("test_papers")
-          .update({
-            extracted_text: `Text extraction in progress: Processing batch ${i + 1} of ${batches.length}...`
-          })
-          .eq("id", paperId);
+      // Process current batch group concurrently
+      const batchPromises = currentBatchGroup.map(async (batchImages, batchIndex) => {
+        const globalBatchIndex = i + batchIndex;
+        const base64Images = batchImages.map(dataUrl => dataUrl.split(',')[1]);
         
         try {
-          // Convert the image data URLs to base64 strings
-          const base64Images = batchUrls.map(dataUrl => {
-            // Remove the data:image/png;base64, prefix
-            return dataUrl.split(',')[1];
-          });
+          console.log(`Processing batch ${globalBatchIndex + 1} with ${batchImages.length} images...`);
           
           const { data, error } = await supabase.functions.invoke("extract-text", {
             body: { 
@@ -203,318 +185,41 @@ Please try uploading a different PDF file.`;
           });
           
           if (error) {
-            console.error(`Error in batch ${i + 1}:`, error);
-            allExtractedText.push(`[Error processing pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}: ${error.message || 'Unknown error'}]`);
-            continue;
+            console.error(`Error in batch ${globalBatchIndex + 1}:`, error);
+            return `[Error processing batch ${globalBatchIndex + 1}: ${error.message || 'Unknown error'}]`;
           }
           
-          if (data && data.extractedText) {
-            allExtractedText.push(data.extractedText);
-          } else {
-            allExtractedText.push(`[No text extracted from pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}]`);
+          if (!data.success) {
+            return `[Failed to extract text from batch ${globalBatchIndex + 1}: ${data.error || 'Unknown error'}]`;
           }
+          
+          return data.extractedText || `[No text extracted from batch ${globalBatchIndex + 1}]`;
         } catch (batchError) {
-          console.error(`Error processing batch ${i + 1}:`, batchError);
-          allExtractedText.push(`[Error processing pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}: ${batchError.message || 'Unknown error'}]`);
+          console.error(`Error processing batch ${globalBatchIndex + 1}:`, batchError);
+          return `[Error processing batch ${globalBatchIndex + 1}: ${batchError.message || 'Unknown error'}]`;
         }
-        
-        // Update paper with partial results for better user experience
-        if (i === 0 || i === batches.length - 1 || i % 3 === 0) {
-          const partialText = allExtractedText.join("\n\n--- PAGE BREAK ---\n\n");
-          await supabase
-            .from("test_papers")
-            .update({
-              has_extracted_text: true,
-              extracted_text: partialText,
-              last_extracted_at: new Date().toISOString()
-            })
-            .eq("id", paperId);
-            
-          console.log(`Updated paper with batch ${i+1} results`);
-        }
-      }
-      
-      // Combine all batches
-      const combinedText = allExtractedText.join("\n\n--- PAGE BREAK ---\n\n");
-      
-      console.log("Text extraction complete, updating paper data...");
-      
-      // Check if we actually extracted any meaningful text
-      console.log("Checking for meaningful text...");
-      console.log("All extracted text entries:", allExtractedText.length);
-      
-      const hasMeaningfulText = allExtractedText.some(text => {
-        const isMeaningful = text && !text.includes('[Error processing') && !text.includes('[No text extracted');
-        console.log("Text entry:", text?.substring(0, 100) + "...", "Meaningful:", isMeaningful);
-        return isMeaningful;
       });
       
-      console.log("Has meaningful text:", hasMeaningfulText);
+      // Wait for all batches in current group to complete
+      const batchResults = await Promise.all(batchPromises);
+      allExtractedText.push(...batchResults);
       
-      if (!hasMeaningfulText) {
-        console.error("No meaningful text found in any batches");
-        throw new Error("No meaningful text was extracted from any pages. Please try again.");
-      }
-      
-      // Create or update metadata
-      const metaData = {
-        ...(paper.metadata || {}),
-        processingDate: new Date().toISOString(),
-        totalPages: imageDataUrls.length,
-        processedPages: maxPages,
-        batchesProcessed: batches.length
-      };
-      
-      // Update the paper with the complete extracted text
-      const { data: updatedPaper, error: finalUpdateError } = await supabase
-        .from("test_papers")
-        .update({
-          has_extracted_text: true,
-          extracted_text: combinedText,
-          last_extracted_at: new Date().toISOString(),
-          metadata: metaData
-        })
-        .eq("id", paperId)
-        .select()
-        .single();
-      
-      if (finalUpdateError) {
-        console.error("Error updating paper with extracted text:", finalUpdateError);
-        throw new Error(`Error updating paper with extracted text: ${finalUpdateError.message}`);
-      }
-      
-      console.log("Paper data updated successfully with extracted text");
-      console.log("About to return formatted paper data...");
-      try {
-        const formattedPaper = formatPaperData(updatedPaper);
-        console.log("Successfully formatted paper data");
-        return formattedPaper;
-      } catch (formatError) {
-        console.error("Error formatting paper data:", formatError);
-        throw new Error(`Error formatting paper data: ${formatError.message}`);
-      }
-    }
-    
-    // Make sure ocr-images bucket exists
-    try {
-      await ensureBucket('ocr-images');
-      console.log("Successfully ensured ocr-images bucket exists");
-    } catch (bucketError) {
-      console.error("Error creating ocr-images bucket:", bucketError);
-      // Continue anyway - bucket might already exist
-    }
-
-    // Create a unique name for the ZIP file containing the images
-    const zipFileName = `${paperId}_${Date.now()}.zip`;
-    console.log(`Creating ZIP file: ${zipFileName}`);
-    
-    // Update status to show we're uploading images
-    await supabase
-      .from("test_papers")
-      .update({
-        extracted_text: "Text extraction in progress: Uploading images for processing..."
-      })
-      .eq("id", paperId);
-    
-    // Upload images to Supabase Storage
-    const imageUrls: string[] = [];
-    
-    for (let i = 0; i < maxPages; i++) {
-      const imageBlob = dataUrlToBlob(imageDataUrls[i]);
-      const imageFile = new File([imageBlob], `page_${i + 1}.png`, { type: 'image/png' });
-      
-      const filePath = `paper-images/${paperId}/page_${i + 1}.png`;
-      
-      try {
-        // Get the current authenticated user
-        const { data: sessionData } = await supabase.auth.getSession();
-        if (!sessionData?.session?.user) {
-          throw new Error("User not authenticated");
-        }
-        
-        const { data: uploadData, error: uploadError } = await supabase.storage
-          .from("ocr-images")
-          .upload(filePath, imageFile, {
-            upsert: true,
-            contentType: 'image/png'
-          });
-        
-        if (uploadError) {
-          console.error(`Error uploading image ${i + 1}:`, uploadError);
-          continue;
-        }
-        
-        const { data: { publicUrl } } = supabase.storage
-          .from("ocr-images")
-          .getPublicUrl(filePath);
-        
-        // Validate that the image URL is accessible
-        try {
-          const checkResponse = await fetch(publicUrl, { method: 'HEAD', cache: 'no-store' });
-          if (!checkResponse.ok) {
-            console.error(`Image URL validation failed for ${publicUrl}: ${checkResponse.status}`);
-            continue;
-          }
-        } catch (validationError) {
-          console.error(`Error validating image URL ${publicUrl}:`, validationError);
-          continue;
-        }
-        
-        imageUrls.push(publicUrl);
-        console.log(`Successfully uploaded image ${i + 1} to ${publicUrl}`);
-      } catch (uploadError) {
-        console.error(`Error in upload process for image ${i + 1}:`, uploadError);
-        continue;
-      }
-    }
-    
-    if (imageUrls.length === 0) {
-      throw new Error("Failed to upload any images to storage");
-    }
-    
-    console.log(`Successfully uploaded ${imageUrls.length} images to storage`);
-    console.log(`Calling extract-text Edge Function with ${imageUrls.length} images...`);
-    
-    // Update status to show OCR processing
-    await supabase
-      .from("test_papers")
-      .update({
-        extracted_text: "Text extraction in progress: Performing OCR with GPT-4.1-mini on document images..."
-      })
-      .eq("id", paperId);
-    
-    // Call the extract-text Supabase Edge Function
-    // Process in batches to improve reliability
-    const batchSize = 5; // Reduced batch size to 5 images at a time for better reliability
-    const batches = [];
-    
-    for (let i = 0; i < imageUrls.length; i += batchSize) {
-      batches.push(imageUrls.slice(i, i + batchSize));
-    }
-    
-    let allExtractedText = [];
-    let modelUsed = "gpt-4.1-mini"; // Updated default model
-    
-    for (let i = 0; i < batches.length; i++) {
-      const batchUrls = batches[i];
-      console.log(`Processing batch ${i + 1} of ${batches.length} with ${batchUrls.length} images...`);
-      
-      // Update progress in the database for frontend to read
+      // Update paper with partial results for better user experience
+      const partialText = allExtractedText.join("\n\n--- PAGE BREAK ---\n\n");
       await supabase
         .from("test_papers")
         .update({
-          extracted_text: `Text extraction in progress: Processing batch ${i + 1} of ${batches.length} with GPT-4.1-mini...`
+          has_extracted_text: true,
+          extracted_text: partialText,
+          last_extracted_at: new Date().toISOString()
         })
         .eq("id", paperId);
+        
+      console.log(`Completed batch group ${Math.floor(i / CONCURRENT_BATCHES) + 1}`);
       
-      // Retry logic for batch processing
-      let batchSuccess = false;
-      let retryCount = 0;
-      const maxRetries = 2;
-      
-      while (!batchSuccess && retryCount <= maxRetries) {
-        try {
-          console.log(`Processing batch ${i + 1} (attempt ${retryCount + 1})...`);
-          
-          const { data, error } = await supabase.functions.invoke("extract-text", {
-            body: { 
-              documentType: 'question',
-              paperId,
-              imageUrls: batchUrls
-            }
-          });
-          
-          if (error) {
-            console.error(`Error in batch ${i + 1} (attempt ${retryCount + 1}):`, error);
-            if (retryCount < maxRetries) {
-              retryCount++;
-              console.log(`Retrying batch ${i + 1} in 5 seconds... (attempt ${retryCount + 1})`);
-              
-              // Update progress to show retry attempt
-              await supabase
-                .from("test_papers")
-                .update({
-                  extracted_text: `Text extraction in progress: Retrying batch ${i + 1} of ${batches.length} (attempt ${retryCount + 1})...`
-                })
-                .eq("id", paperId);
-              
-              await new Promise(resolve => setTimeout(resolve, 5000));
-              continue;
-            } else {
-              allExtractedText.push(`[Error processing pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}: ${error.message || 'Unknown error'}]`);
-              break;
-            }
-          }
-          
-          if (data && data.extractedText) {
-            allExtractedText.push(data.extractedText);
-            // Capture model information if available
-            if (data.model) {
-              modelUsed = data.model;
-            }
-            batchSuccess = true;
-            
-            // Update progress to show successful batch completion
-            await supabase
-              .from("test_papers")
-              .update({
-                extracted_text: `Text extraction in progress: Completed batch ${i + 1} of ${batches.length} successfully...`
-              })
-              .eq("id", paperId);
-          } else {
-            allExtractedText.push(`[No text extracted from pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}]`);
-            batchSuccess = true;
-            
-            // Update progress to show batch completion (even if no text extracted)
-            await supabase
-              .from("test_papers")
-              .update({
-                extracted_text: `Text extraction in progress: Completed batch ${i + 1} of ${batches.length} (no text found)...`
-              })
-              .eq("id", paperId);
-          }
-        } catch (batchError) {
-          console.error(`Error processing batch ${i + 1} (attempt ${retryCount + 1}):`, batchError);
-          if (retryCount < maxRetries) {
-            retryCount++;
-            console.log(`Retrying batch ${i + 1} in 5 seconds... (attempt ${retryCount + 1})`);
-            
-            // Update progress to show retry attempt
-            await supabase
-              .from("test_papers")
-              .update({
-                extracted_text: `Text extraction in progress: Retrying batch ${i + 1} of ${batches.length} (attempt ${retryCount + 1}) due to error...`
-              })
-              .eq("id", paperId);
-            
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            continue;
-          } else {
-            allExtractedText.push(`[Error processing pages ${i * batchSize + 1}-${i * batchSize + batchUrls.length}: ${batchError.message || 'Unknown error'}]`);
-            break;
-          }
-        }
-      }
-      
-      // Add a small delay between batches to prevent overwhelming the Edge Function
-      if (i < batches.length - 1) {
-        console.log(`Waiting 2 seconds before processing next batch...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-      }
-      
-      // Update paper with partial results for better user experience
-      if (i === 0 || i === batches.length - 1) {
-        const partialText = allExtractedText.join("\n\n--- PAGE BREAK ---\n\n");
-        await supabase
-          .from("test_papers")
-          .update({
-            has_extracted_text: true,
-            extracted_text: partialText,
-            last_extracted_at: new Date().toISOString()
-          })
-          .eq("id", paperId);
-          
-        console.log(`Updated paper with batch ${i+1} results`);
+      // Small delay between batch groups
+      if (i + CONCURRENT_BATCHES < batches.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     
@@ -523,14 +228,25 @@ Please try uploading a different PDF file.`;
     
     console.log("Text extraction complete, updating paper data...");
     
-    // Store the ZIP file name for future reference
+    // Check if we actually extracted any meaningful text
+    const hasMeaningfulText = allExtractedText.some(text => {
+      return text && !text.includes('[Error processing') && !text.includes('[Failed to extract') && !text.includes('[No text extracted');
+    });
+    
+    if (!hasMeaningfulText) {
+      throw new Error("No meaningful text was extracted from any pages. Please try again.");
+    }
+    
+    // Create metadata
     const metaData = {
       ...(paper.metadata || {}),
-      zipFileName,
-      pageCount: imageUrls.length,
       processingDate: new Date().toISOString(),
-      imageFormat: 'png',
-      model: modelUsed // Store the model used for extraction
+      totalPages: imageDataUrls.length,
+      processedPages: maxPages,
+      batchesProcessed: batches.length,
+      batchSize: BATCH_SIZE,
+      concurrentBatches: CONCURRENT_BATCHES,
+      processingMethod: 'optimized-concurrent'
     };
     
     // Update the paper with the complete extracted text
@@ -547,12 +263,15 @@ Please try uploading a different PDF file.`;
       .single();
     
     if (finalUpdateError) {
-      console.error("Error updating paper with extracted text:", finalUpdateError);
       throw new Error(`Error updating paper with extracted text: ${finalUpdateError.message}`);
     }
     
     console.log("Paper data updated successfully with extracted text");
     return formatPaperData(updatedPaper);
+    
+    // Note: We're now using the optimized concurrent processing approach above
+    // No need to upload images to storage - everything is processed in memory
+    console.log("Using optimized concurrent processing - no image storage required");
   } catch (error) {
     console.error("Text extraction failed:", error);
     console.error("Error stack:", error.stack);
